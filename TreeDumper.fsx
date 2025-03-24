@@ -7,7 +7,7 @@ let dirIndent = "-"
 let fileIndent = "+"
 let interestingFiles = [ ".xml"; ".nupkg" ]
 
-let blacklist = [ "bin"; "obj"; "packages"; "runtimes" ]
+let blacklist = [ "bin"; "obj"; "packages"; "runtimes"; ".git" ]
 
 module Helpers =
 

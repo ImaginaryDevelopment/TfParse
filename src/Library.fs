@@ -3,6 +3,8 @@ module TfParse.Parsing
 
 open FParsec
 
+open BReuse
+
 // Define the types to store parsed data
 
 type SettingValue =
@@ -16,6 +18,8 @@ type ModuleSetting =
     | Providers of (string * string) list
     | Setting of string * SettingValue
     | Comment of string
+    | SettingBlock of string * (string * SettingValue) list
+    | ValueList of string * string list
 
 type ModuleBlock = {
     Module: string
@@ -24,14 +28,54 @@ type ModuleBlock = {
     Settings: ModuleSetting list
 }
 
+let check = char "\u2713"
+let xMark = char "\u2715"
+
+let getErrors (erm: ErrorMessageList) =
+    if isNull erm then
+        None
+    else
+        erm
+        |> Seq.unfold (fun eml ->
+            if isNull eml || isNull eml.Head then
+                None
+            else
+                Some(eml.Head, eml.Tail))
+        |> Some
+
+// let haltOnFailure parserTitle parser (charStream: CharStream<_>) =
+//     parser charStream
+//     |> fun (x: Reply<_>) ->
+//         match x.Status with
+//         | Ok -> x
+//         | FatalError
+//         | Error ->
+//             eprintfn "\t%s Halt: %A" parserTitle x.Status
+//             eprintfn "\t%A" charStream.UserState
+//             getErrors x.Error |> Option.iter (Seq.iter (eprintfn "\t%A"))
+
+//             // failwithf "Parser %s failed" parserTitle
+//             x
+//         | _ ->
+//             eprintfn "Bizarre status: %A" x.Status
+//             x
+
+// Define a parser for whitespace
+let ws = skipMany (pchar ' ' <|> pchar '\t' <|> pchar '\n' <|> pchar '\r')
+
 // Parser for single-line comments (either # or //)
 let singleLineComment: Parser<string, unit> =
     let sSpace = skipMany (pchar ' ' <|> pchar '\t' <|> pchar '\n' <|> pchar '\r')
 
     //(pstring "#" <|> pstring "//") >>. manyTill anyChar (skipNewline) |>> (fun _ -> "Single-line comment") <?> "single-line comment"
-    (pstring "#" <|> pstring "//") >>. sSpace >>. manyTill anyChar (skipNewline)
-    |>> (fun x -> System.String(Array.ofList x))
+    sSpace
+    >>. (pstring "#" <|> pstring "//")
+    >>. sSpace
+    // >>. manyTill anyChar newline
+    >>. restOfLine true
     <?> "single-line comment"
+
+// |> haltOnFailure "singleLineComment"
 
 // Parser for multi-line comments (between /* and */)
 let multiLineComment: Parser<string, unit> =
@@ -58,22 +102,27 @@ let quotedString: Parser<string, unit> =
     between (pchar '"') (pchar '"') (manyChars (nonEscapeChar <|> escapeSequence))
     <?> "quoted string"
 
-// Define a parser for whitespace
-let ws = skipMany (pchar ' ' <|> pchar '\t' <|> pchar '\n' <|> pchar '\r')
 
 // Define a parser for string literals (i.e., quoted strings)
 let stringLiteral: Parser<string, unit> =
     between (pstring "\"") (pstring "\"") (manyChars (noneOf "\""))
 
-open FParsec
+let createRunHarness title parser =
+    fun (input: string) ->
+        match run parser input with
+        | Success(x, _, _) -> sprintf "%s Parsed: %A ('%s')" title x (String.truncate 10 input) |> Result.Ok
+        | Failure(errMsg, _, _) -> Result.Error(sprintf "Parsing failed: %s" errMsg, sprintf "%s Parser" title)
 
 // Parser for an identifier (starts with a letter or underscore, followed by letters, digits, or underscores)
 let identifier: Parser<string, unit> =
     many1Satisfy (fun c -> System.Char.IsLetter(c) || c = '_') <?> "identifier"
-    .>>. manySatisfy (fun c -> System.Char.IsLetterOrDigit(c) || c = '_')
+    .>>. manySatisfy (fun c -> System.Char.IsLetterOrDigit(c) || c = '_' || c = '.')
     <?> "identifier continuation"
     |>> (fun (first, rest) -> first + rest)
+    <?> "identifier"
 
+let runIdentifierParser input =
+    createRunHarness "identifier" identifier input
 // Parser for an integer number
 let integer: Parser<int, unit> = pint32 <?> "integer"
 
@@ -84,39 +133,46 @@ let floatNumber: Parser<float, unit> = pfloat <?> "float"
 let boolean: Parser<bool, unit> =
     (pstring "true" >>% true) <|> (pstring "false" >>% false) <?> "boolean"
 
-
 let valueParser: Parser<SettingValue, unit> =
     choice [
         integer |>> Int
         floatNumber |>> Float
         boolean |>> Bool
+        // unquoted identifier
         identifier |>> Str
+        // quoted value
         quotedString |>> Str
     ]
+    <??> "valueParser"
 
+// none of this appears to properly handle a list
+module JsonEncode =
+    // Parser for a key-value pair inside the jsonencode block
+    let keyValuePair: Parser<string * SettingValue, unit> =
+        stringLiteral .>> ws .>>. (pchar '=' >>. ws >>. valueParser)
+        <?> "key-value pair"
 
-// Parser for a key-value pair inside the jsonencode block
-let keyValuePair: Parser<string * SettingValue, unit> =
-    stringLiteral .>> ws .>>. (pchar '=' >>. ws >>. valueParser)
-    <?> "key-value pair"
+    // Parser for a JSON object (a block of key-value pairs enclosed in curly braces)
+    let jsonObject: Parser<_ list, unit> =
+        between (pchar '{') (pchar '}') (sepBy keyValuePair (ws >>. pchar ',' .>> ws))
+        <?> "JSON object"
 
-// Parser for a JSON object (a block of key-value pairs enclosed in curly braces)
-let jsonObject: Parser<_ list, unit> =
-    between (pchar '{') (pchar '}') (sepBy keyValuePair (ws >>. pchar ',' .>> ws))
-    <?> "JSON object"
-
-// Parser for the jsonencode function call
-let jsonencodeParser: Parser<_, unit> =
-    pstring "jsonencode" >>. ws >>. between (pchar '(') (pchar ')') jsonObject
-    <?> "jsonencode block"
+    // Parser for the jsonencode function call
+    let jsonencodeParser: Parser<_, unit> =
+        pstring "jsonencode" >>. ws >>. between (pchar '(') (pchar ')') jsonObject
+        <?> "jsonencode block"
 //
 //let jsonEncoded : Parser<obj, unit> =
 //    pstring "jsonencode" >>. ws >> between (pstring "({" >>. ws) (pstring "})" >>. ws) (
 //        many anyChar
 //    )
 //    |>> fun x -> x
+
 let lEqR lParser rParser =
-    ws >>. lParser .>> ((ws .>> pstring "=" .>> ws) |>> ignore) .>>. rParser
+    lParser .>> (ws .>> pstring "=" .>> ws |>> ignore) .>>. rParser
+
+let myBetween lParser rParser bodyParser =
+    between (lParser >>. ws) (rParser >>. ws) bodyParser
 
 let knownSetting text rParser =
     lEqR (pstring text) rParser |>> fun (_, r) -> r
@@ -124,11 +180,27 @@ let knownSetting text rParser =
 // Parser for an unquoted setting, which could be an identifier, a number, or a boolean
 let unquotedSetting: Parser<string * SettingValue, unit> =
     //identifier .>> ((ws .>> pstring "="  .>> ws) |>> ignore ) .>>. valueParser |>> fun x -> x
-    lEqR identifier valueParser <?> "unquotedSetting"
+    ws >>. lEqR identifier valueParser <??> "unquotedSetting"
+
+let anySetting = ws >>. lEqR (identifier <|> stringLiteral) valueParser
+
+let runUnquotedSParser (input: string) =
+    createRunHarness "US" unquotedSetting input
+
+let tObjectBody =
+    ws >>. many (ws >>. unquotedSetting .>> ws) .>> ws <??> "tObjectBody"
+
+let runTObjectBodyParser input =
+    createRunHarness "tObjectBody" tObjectBody input
 
 let tObject: Parser<(string * SettingValue) list, unit> =
-    between (pchar '{' >>. ws) (pchar '}' >>. ws) (attempt (many unquotedSetting))
-    <?> "tObject"
+
+    // let tBody =
+    // between (pchar '{' >>. ws) (pchar '}' >>. ws) (attempt (many unquotedSetting))
+    between (pchar '{' >>. ws) (ws >>. pchar '}') (ws >>. tObjectBody) <?> "tObject"
+
+let runTObjectParser input =
+    createRunHarness "tObject" tObject input
 
 // Define a parser for the "source" keyword and its value
 let sourceParser: Parser<string, unit> =
@@ -146,32 +218,91 @@ let versionParser: Parser<string, unit> =
 
 // assume one provider for now?
 let providersParser: Parser<(string * string) list, unit> =
-    knownSetting "providers" tObject
+    knownSetting "providers" tObject <?> "providers"
     |>> function
         | [] -> List.empty
         | (k, Str v) :: [] -> [ k, v ]
         | multi -> failwith "multi provider not implemented"
     <?> "providers"
 
+let descriptionBlockParser: Parser<string, unit> =
+    // let nonEotItem = manyChars (noneOf ['\r';'\n']) .>> newline
+    let nonEotItem = charsTillString "EOT" false System.Int32.MaxValue
+    let eotBlock = between (pstring "EOT" .>> ws) (pstring "EOT" >>. ws) nonEotItem
+
+    ws
+    >>. pstring "description"
+    >>. ws
+    >>. pchar '='
+    >>. ws
+    >>. pstring "<<-"
+    >>. ws
+    >>. eotBlock
+
+
+let tQObject =
+    let tqObjectBody = ws >>. many (ws >>. anySetting .>> ws) .>> ws <??> "tqObjectBody"
+
+    between (pchar '{' >>. ws) (ws >>. pchar '}') (ws >>. tqObjectBody)
+    <?> "tqObject"
+
+let settingBlockParser: Parser<string * (string * SettingValue) list, unit> =
+    lEqR (ws >>. identifier) tQObject <??> "setting block"
+
+// any type of item comma delimited
+let csvParser p =
+    let items =
+        ws
+        >>. choice [
+            attempt (sepEndBy p (ws >>. pchar ',' .>> ws))
+            attempt (sepBy p (ws >>. pchar ',' .>> ws))
+            // handle a single item, no comma list
+            p |>> fun x -> [ x ]
+        ]
+        <?> "csvParser"
+        .>> ws
+
+    items
+
+let qsListParser =
+    let items = csvParser quotedString
+    let list = myBetween (pchar '[') (pchar ']') (ws >>. attempt items .>> ws)
+    list
+
+let valueListBlockParser = lEqR (ws >>. identifier) qsListParser
+
+
 let mParser: Parser<ModuleSetting, unit> =
-    choice [
-        providersParser |>> fun x -> ModuleSetting.Providers(x)
-        unquotedSetting |>> ModuleSetting.Setting
-        commentLineParser |>> ModuleSetting.Comment
+    ws
+    >>. choice [
+        attempt providersParser |>> fun x -> ModuleSetting.Providers(x)
+        attempt descriptionBlockParser
+        |>> fun x -> ModuleSetting.Setting("description", Str x)
+
+        attempt settingBlockParser |>> fun x -> ModuleSetting.SettingBlock x
+
+        attempt unquotedSetting |>> ModuleSetting.Setting
+
+        valueListBlockParser |>> ModuleSetting.ValueList
+
+        (ws >>. commentLineParser .>> ws) |>> ModuleSetting.Comment
+
     ]
+    .>> ws
     <?> "mParser"
+
 // Define the module parser that parses the whole module block
 let moduleParser: Parser<ModuleBlock, unit> =
-    pstring "module" >>. ws >>. stringLiteral .>> ws
-    .>>. between
-        (pchar '{' >>. ws)
-        (pchar '}' >>. ws)
-        (
+    let parseModuleBody =
         // Parse the source and version within the block
-        (sourceParser .>> ws
-         .>>. opt versionParser
-         .>>. ws
-         .>>. many (ws >>. mParser .>> ws)))
+        sourceParser .>> ws
+        .>>. opt versionParser
+        .>>. ws
+        .>>. many (ws >>. mParser .>> ws)
+
+    pstring "module" >>. ws >>. stringLiteral .>> ws
+    .>>. between (pchar '{' >>. ws) (pchar '}' >>. ws) parseModuleBody
+
     |>> fun (m, (((source, versionOpt), _), s)) -> {
         Module = m
         Source = source
@@ -181,33 +312,15 @@ let moduleParser: Parser<ModuleBlock, unit> =
 
 let multiModule: Parser<ModuleBlock list, unit> = many moduleParser
 
-let createRunHarness title parser =
-    fun (input: string) ->
-        match run parser input with
-        | Success(x, _, _) -> printfn "%s Parsed: %A" title x
-        | Failure(errMsg, _, _) ->
-            printfn "Parsing failed: %s" errMsg
-            failwithf "%s Parser" title
 
-let runVParser (input: string) =
-    //match run versionParser input with
-    //| Success(v, _, _) ->
-    //    printfn "Parsed Version: %s" v
-    //| Failure(errMsg, _, _) ->
-    //    printfn "Parsing failed: %s" errMsg
-    //    failwith "V Parser"
+let runVersionParser (input: string) =
     createRunHarness "V" versionParser input
 
-Samples.simpleVersion |> runVParser
 
-let runSettingParser (input: string) =
+let runSettingParser indent (input: string) =
     match run unquotedSetting input with
-    | Success((k, v), _, _) -> printfn "Parsed Setting: %s = %A" k v
-    | Failure(errMsg, _, _) ->
-        printfn "Parsing failed: %s" errMsg
-        failwith "S Parser"
-
-[ "version = \"1.0.0\""; "enabled = true" ] |> List.iter runSettingParser
+    | Success((k, v), _, _) -> sprintf "Parsed Setting: %s = %A" k v |> Result.Ok
+    | Failure(errMsg, _, _) -> Result.Error(sprintf "%sParsing failed: %s" indent errMsg, "S Parser")
 
 // Helper function to run the parser
 let runParser (input: string) =
@@ -216,11 +329,102 @@ let runParser (input: string) =
         printfn "Parsed module: Source: %s, Version: %s" result.Source (result.Version |> Option.defaultValue "latest")
         printfn "Settings:"
         result.Settings |> List.iter (fun s -> printfn "\t%A" s)
-    | Failure(errMsg, _, _) ->
-        printfn "Parsing failed: %s" errMsg
+    | Failure(errMsg, pe, us) ->
+        eprintfn "Parsing failed: %s" errMsg
+        eprintfn "Msgs:"
+
+        pe.Messages
+        |> getErrors
+        |> Option.iter (Seq.iter (fun em -> eprintfn "\t%A:%A" (em.GetType().Name) em.Type))
+
+        eprintfn "PE: %A" pe
         failwithf "Parser input: '%s'" input
+
+let runSamples () =
+    let runList parser items : Result<string, string * string> list =
+        items
+        |> List.mapi (fun i item ->
+            // printfn "%s%i:" indent i
+
+            try
+                parser item
+            // Result.Ok($"{state.Result}")
+            with ex ->
+                Result.Error(ex.Message, ex.Message))
+
+    let i = "\t"
+
+    [
+
+        "Value", Samples.valuesSimple |> List.map (createRunHarness "value" valueParser)
+        "Comment",
+        Samples.commentSamples
+        |> List.map (createRunHarness "sComment" singleLineComment)
+        "LEqR",
+        Samples.lEqRSamples
+        |> List.map (createRunHarness "lEqR" (lEqR identifier identifier))
+
+        "Identifier", Samples.identifierSamples |> List.map runIdentifierParser
+
+        "Version", [ Samples.simpleVersion |> runVersionParser ]
+
+        "Setting",
+        [
+            "version = \"1.0.0\""
+            "enabled = true"
+            "octopus = octopus "
+            "octopus=octopusdeploy"
+        ]
+        |> List.map (runSettingParser i)
+        "UnquotedSetting", Samples.unquotedSettingSamples |> runList runUnquotedSParser
+
+        "tObjectBody", Samples.tObjectBodySamples |> runList runTObjectBodyParser
+        "tObject", Samples.tObjectSamples |> List.map runTObjectParser
+
+        "description",
+        Samples.exampleDescription
+        |> List.map (createRunHarness "description block" descriptionBlockParser)
+
+        "SettingBlock",
+        Samples.exampleSettingBlocks
+        |> runList (createRunHarness "SettingBlock" settingBlockParser)
+
+        "values list",
+        Samples.exampleQsItems
+        |> runList (createRunHarness "values list" (ws >>. csvParser quotedString))
+
+        "ValueList", Samples.exampleValueList |> runList (createRunHarness "ValueList" qsListParser)
+
+        "Ms", Samples.exampleMs |> runList (createRunHarness "Ms" mParser)
+    ]
+    |> List.iter (fun (title, results) ->
+        let hasError =
+            results
+            |> Seq.exists (function
+                | Result.Error _ -> true
+                | _ -> false)
+
+        if hasError then
+            printfn "%s parser:" title
+
+            results
+            |> List.iteri (fun index ->
+                function
+                | Result.Ok msg -> printfn "%s%c %i %s" i check index msg
+                | Result.Error(e, f) -> eprintfn "%s%c %i %s-%s" i xMark index e f)
+
+            // printfn "%A" results
+            failwithf "%s failed" title)
+
+
+
+
 
 
 let runParserMainSample () =
-    // Example Terraform input
+
+    runSamples ()
+
+    printfn "Starting main sample"
+
     runParser Samples.exampleInput // |> Dump |> ignore

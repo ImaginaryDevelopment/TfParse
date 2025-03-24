@@ -1,8 +1,20 @@
 module TfParse.Samples
 
+open BReuse
+
 let simpleVersion = "version = \"1.0.0\""
 
 let simpleSettings = [ "version = \"1.0.0\""; "enabled = true" ]
+
+let valuesSimple = [ "1"; "true"; "octopus"; "\"octopus\"" ]
+
+let commentSamples = [ "# hi\n"; "// hi\r"; " # hello . _ world\r\n"; " # hello . _ world\n\r" ]
+let lEqRSamples = [ "a=b"; "a = b"; "a =b"; "a= b" ]
+
+let breakOnTabLiteral text =
+    match text |> String.indexOf "\\t" with
+    | Some i -> failwithf "found tab literal at %i in '%s'" i text
+    | None -> text
 
 let simpleModule =
     """module "test" {
@@ -16,6 +28,44 @@ let simpleModule =
  name        = "test-${random_string.this.result}"
  vpc_id      = aws_vpc.test.id
 }"""
+
+let identifierSamples = [ "octopus"; "module.connector" ]
+
+let unquotedSettingSamples = [
+    """octopus = octopus """
+    """octopus = octopus"""
+    """octopus =octopus"""
+    """octopus=octopus"""
+    "connector = module.connector"
+    "   connector = module.connector"
+    """octopus="octopus" """
+    breakOnTabLiteral "octopus=\"octopus\""
+    breakOnTabLiteral " octopus=\"octopus\"\t"
+    breakOnTabLiteral "\toctopus=\"octopus\"\t"
+
+    breakOnTabLiteral " \t octopus=\"octopus\" \t \r\n"
+]
+
+let tObjectBodySamples = [
+    breakOnTabLiteral "\toctopus = octopus "
+    """octopus = octopus"""
+    """octopus=octopus"""
+    " "
+
+    // failing
+    """ octopus ="octopus" """
+    """ octopus = octopus """
+]
+
+let tObjectSamples = [
+    """{
+    }"""
+    """{}"""
+    """{
+        octopus = octopus
+        octopus=octopus
+    }  """
+]
 
 let examples = [
     """module "my_module" {
@@ -80,6 +130,51 @@ module "iam_role" {
 
 ]
 
+let exampleDescription = [
+    """
+  description = <<- EOT
+    ### Managed by Terraform Octopus
+
+    <https://github.com/ABC-DEF/ADA.Octopus.tf-xyz-d>
+  EOT"""
+]
+
+let exampleSettingBlocks = [
+    """common_variables = {
+  }
+  """
+    """common_variables = {
+    "test" = "test2"
+  }
+  """
+]
+
+let exampleQsItems = [ "test"; trimEnd """ "test1", "test2" """; """ "test3", """ ]
+
+let exampleValueList = [
+    """[
+    "Test"
+  ]"""
+
+    """[
+
+  ]"""
+
+    """[
+]"""
+
+]
+
+let exampleMs = [
+    """   # Optional: Add security group definitions"""
+    """
+    providers = {
+    octopus = octopus
+  }"""
+    """octopus = octopus"""
+    yield! exampleDescription
+]
+
 let exampleInput =
     """module "example" {
   source = "example-source"
@@ -87,8 +182,29 @@ let exampleInput =
   providers = {
     octopus = octopus
   }
+
+  description = <<- EOT
+    ### Managed by Terraform Octopus
+
+    <https://github.com/ABC-DEF/ADA.Octopus.tf-xyz-d>
+  EOT
+
+  connector = module.connector
+  space_id = var.space_id
+  display_name = "Mario Toasty"
+  client_id = "123"
+
   # Optional: Additional routing
   enabled = true
   base_cidr_block = "10.0.0.0/8"
   servers = 3
+
+  common_variables = {
+    "Tenant.Common.Subset.Type" = "QA"
+    "Tenant.Common"    = "D_#{Defaults.EnvName}"
+  }
+
+  tenant_tags = [
+    "Tenant/Whatever"
+  ]
 }"""
