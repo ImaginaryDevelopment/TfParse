@@ -16,23 +16,32 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: 8.0.x
+        
     - name: Restore dependencies
       run: dotnet restore src/TfParsec.fsproj
+      
     - name: Build
       run: dotnet build --no-restore src/TfParsec.fsproj
-    - name: Pack
-      run: dotnet pack src/TfParsec.fsproj -o src/bin
+      
 #    - name: Test
 #      run: dotnet test --no-build --verbosity normal
+
+    - name: Pack
+      run: dotnet pack src/TfParsec.fsproj -o src/bin
+      
+    - name: TreeDump
+      run: dotnet fsi TreeDumper.fsx
+      
     - name: Upload a Build Artifact
       uses: actions/upload-artifact@v4.6.2
       with:
         # Artifact name
         name: TfParse.nupkg
-        path: '/home/runner/work/TfParse/TfParse/src/bin/**/TfParsec.*.nupkg'
+        path: '/home/runner/work/TfParse/TfParse/src/bin/**/TfParse.*.nupkg'
         
         
