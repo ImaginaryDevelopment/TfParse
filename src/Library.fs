@@ -14,12 +14,24 @@ type SettingValue =
     | Str of string
     | Other of obj
 
+type ProjectEnvironment = {
+    EId: string
+    Vars: (string * SettingValue) list
+}
+
+type AttachedProject = {
+    Project: string
+    Envs: ProjectEnvironment list
+}
+
 type ModuleSetting =
     | Providers of (string * string) list
     | Setting of string * SettingValue
     | Comment of string
     | SettingBlock of string * (string * SettingValue) list
     | ValueList of string * string list
+    | AttachedProjects of AttachedProject list
+
 
 type ModuleBlock = {
     Module: string
@@ -187,8 +199,7 @@ let anySetting = ws >>. lEqR (identifier <|> stringLiteral) valueParser
 let runUnquotedSParser (input: string) =
     createRunHarness "US" unquotedSetting input
 
-let tObjectBody =
-    ws >>. many (ws >>. unquotedSetting .>> ws) .>> ws <??> "tObjectBody"
+let tObjectBody = ws >>. many (ws >>. anySetting .>> ws) .>> ws <??> "tObjectBody"
 
 let runTObjectBodyParser input =
     createRunHarness "tObjectBody" tObjectBody input
@@ -264,6 +275,9 @@ let csvParser p =
 
     items
 
+let myBetweenChars l r bodyParser =
+    myBetween (pchar l) (pchar r) (ws >>. attempt bodyParser .>> ws)
+
 let qsListParser =
     let items = csvParser quotedString
     let list = myBetween (pchar '[') (pchar ']') (ws >>. attempt items .>> ws)
@@ -271,15 +285,52 @@ let qsListParser =
 
 let valueListBlockParser = lEqR (ws >>. identifier) qsListParser
 
+let idParser = lEqR (pstring "id") identifier |>> snd
+let varsParser = lEqR (pstring "vars") tObject |>> snd
+
+// { id = ... \r\n vars = {}}
+let projectEnvParser =
+    let body = ws >>. idParser .>>. (ws >>. varsParser)
+    myBetweenChars '{' '}' body <?> "ProjectEnv"
+
+// [ items ]
+let envsListParser =
+    let items =
+        csvParser (projectEnvParser |>> fun (envId, vars) -> { EId = envId; Vars = vars })
+
+    myBetween (pchar '[') (pchar ']') (ws >>. attempt items .>> ws) <?> "EnvsList"
+
+
+// envs = [ ..., ... ]
+let envsBlockParser = lEqR (pstring "envs") envsListParser |>> snd <?> "EnvsBlock"
+
+// { project = ... \r\n envs = [ ... ]}
+let projectParser =
+    let projectLine = lEqR (pstring "project") quotedString |>> snd
+    let bodyParser = ws >>. projectLine .>>. (ws >>. envsBlockParser .>> ws)
+
+    myBetweenChars '{' '}' bodyParser
+    |>> fun (pl, envs) -> { Project = pl; Envs = envs }
+    <?> "Project"
+
+let projectListParser =
+    myBetweenChars '[' ']' (csvParser projectParser) <??> "ProjectList"
+
+let projectsParser =
+    lEqR (pstring "attached_projects") projectListParser |>> snd <??> "Projects"
 
 let mParser: Parser<ModuleSetting, unit> =
     ws
     >>. choice [
         attempt providersParser |>> fun x -> ModuleSetting.Providers(x)
+
         attempt descriptionBlockParser
         |>> fun x -> ModuleSetting.Setting("description", Str x)
 
+
         attempt settingBlockParser |>> fun x -> ModuleSetting.SettingBlock x
+
+        projectsParser |>> ModuleSetting.AttachedProjects
 
         attempt unquotedSetting |>> ModuleSetting.Setting
 
@@ -315,7 +366,6 @@ let multiModule: Parser<ModuleBlock list, unit> = many moduleParser
 
 let runVersionParser (input: string) =
     createRunHarness "V" versionParser input
-
 
 let runSettingParser indent (input: string) =
     match run unquotedSetting input with
@@ -395,6 +445,18 @@ let runSamples () =
 
         "ValueList", Samples.exampleValueList |> runList (createRunHarness "ValueList" qsListParser)
 
+        "ProjectEnvs", Samples.examplePEnv |> runList (createRunHarness "ProjectEnvs" projectEnvParser)
+
+        "Project", Samples.exampleProj |> runList (createRunHarness "Project" projectParser)
+
+        "ProjectList",
+        Samples.exampleProjectList
+        |> runList (createRunHarness "ProjectList" projectListParser)
+
+        "exampleAttachedProjectList",
+        Samples.exampleAttachedProjectList
+        |> runList (createRunHarness "aProjectList" projectsParser)
+
         "Ms", Samples.exampleMs |> runList (createRunHarness "Ms" mParser)
     ]
     |> List.iter (fun (title, results) ->
@@ -414,7 +476,10 @@ let runSamples () =
                 | Result.Error(e, f) -> eprintfn "%s%c %i %s-%s" i xMark index e f)
 
             // printfn "%A" results
-            failwithf "%s failed" title)
+            failwithf "%s failed" title
+    // else
+    //     printfn "%s finished" title
+    )
 
 
 

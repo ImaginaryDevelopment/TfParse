@@ -64,6 +64,7 @@ let tObjectSamples = [
     """{
         octopus = octopus
         octopus=octopus
+        "octopus" = "octopus"
     }  """
 ]
 
@@ -165,6 +166,131 @@ let exampleValueList = [
 
 ]
 
+// let examplePEVars = [
+//     """{
+//   }"""
+
+// ]
+
+let examplePEnv = [
+    """{
+    id = local.envs.dev
+    vars = {
+    }}
+  """
+
+    """{
+    id = local.envs.dev
+    vars = {
+      "Project.Test" = "hello world"
+    }}
+  """
+]
+
+let exampleProj = [
+    """{
+    project = "Deploy My Components"
+    envs = [
+    ]
+  }
+  """
+
+    """{
+    project = "Test project"
+    envs = [
+      {
+        id = local.envs.local
+        vars = {
+        }
+      }
+    ]
+  }"""
+
+    """{
+    project = "Test project"
+    envs = [
+      {
+        id = local.envs.local
+        vars = {
+          "var1" = "var1Value"
+        }
+      }
+    ]
+  }"""
+
+]
+
+let exampleProjectList = [
+    """[
+    {
+      project = "hello pl 1"
+      envs = [
+      ]
+    },
+    {
+      project = "hello pl2"
+      envs = [
+        {
+          id = pl2.env1
+          vars = {
+          }
+        }
+      ]
+    }
+  ]"""
+
+    """[
+    {
+      project = "hello pl 1"
+      envs = [
+      ]
+    },
+    {
+      project = "hello pl2"
+      envs = [
+        {
+          id = pl2.env1
+          vars = {
+            "pl2.env1.var1" = "v"
+          }
+        }
+      ]
+    }
+  ]"""
+
+    """[
+  ]"""
+]
+
+let exampleAttachedProjectList = [
+    """attached_projects = [
+  ]"""
+    """attached_projects = [
+    {
+      project = "Config - IYKYK"
+      envs = [
+      ]
+    }
+  ]"""
+    """attached_projects = [
+    {
+      project = "Config - IYKYK"
+      envs = [
+      ]
+    },
+    {
+      project = "apl 3"
+      envs = [
+        {
+          id = local.apl3.env1
+          vars = {
+          }
+        }
+      ]
+    }
+  ]"""
+]
+
 let exampleMs = [
     """   # Optional: Add security group definitions"""
     """
@@ -173,6 +299,7 @@ let exampleMs = [
   }"""
     """octopus = octopus"""
     yield! exampleDescription
+    yield! exampleAttachedProjectList
 ]
 
 let exampleInput =
@@ -206,5 +333,19 @@ let exampleInput =
 
   tenant_tags = [
     "Tenant/Whatever"
+  ]
+
+  attached_projects = [
+    {
+      project = "Test this mess"
+      envs = [
+        {
+          id = main.proj1.env1
+          vars = {
+            "Project.ITest" = "https://abc_+-{}"
+          }
+        }
+      ]
+    }
   ]
 }"""
