@@ -1,3 +1,5 @@
+module TfParse.Samples
+
 let simpleVersion = "version = \"1.0.0\""
 
 let simpleSettings = [ "version = \"1.0.0\""; "enabled = true" ]

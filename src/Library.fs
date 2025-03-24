@@ -1,4 +1,5 @@
-﻿module TfParse
+﻿//cspell: ignore jsonencode
+module TfParse.Parsing
 
 open FParsec
 
@@ -197,7 +198,7 @@ let runVParser (input: string) =
     //    failwith "V Parser"
     createRunHarness "V" versionParser input
 
-simpleVersion |> runVParser
+Samples.simpleVersion |> runVParser
 
 let runSettingParser (input: string) =
     match run unquotedSetting input with
@@ -220,5 +221,6 @@ let runParser (input: string) =
         failwithf "Parser input: '%s'" input
 
 
-// Example Terraform input
-runParser exampleInput |> Dump |> ignore
+let runParserMainSample () =
+    // Example Terraform input
+    runParser Samples.exampleInput // |> Dump |> ignore
