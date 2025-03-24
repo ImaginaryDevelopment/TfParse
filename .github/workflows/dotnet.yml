@@ -33,6 +33,6 @@ jobs:
       with:
         # Artifact name
         name: TfParse.nupkg
-        path: TfParse.*.nupkg
+        path: src/bin/Release/TfParsec.*.nupkg
         
         
