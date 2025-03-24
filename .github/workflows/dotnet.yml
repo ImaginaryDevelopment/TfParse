@@ -25,7 +25,7 @@ jobs:
     - name: Build
       run: dotnet build --no-restore src/TfParsec.fsproj
     - name: Pack
-      run: dotnet pack src/TfParsec.fsproj
+      run: dotnet pack src/TfParsec.fsproj -o src/bin
 #    - name: Test
 #      run: dotnet test --no-build --verbosity normal
     - name: Upload a Build Artifact
@@ -33,6 +33,6 @@ jobs:
       with:
         # Artifact name
         name: TfParse.nupkg
-        path: '**/TfParsec.*.nupkg'
+        path: 'src/bin/**/TfParsec.*.nupkg'
         
         
