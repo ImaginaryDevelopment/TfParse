@@ -45,6 +45,8 @@ let csvExamples = [
       9,
   """,
     3
+// empty list
+// "", 0
 ]
 
 let arrayExamples = [ "[0,2]"; "[ 1, 2 ]"; "[ 2 , 2 ]"; "[ true, 4,]"; "[ true, 5, ]" ]
@@ -191,9 +193,9 @@ let exampleSettingBlocks = [
   """
 ]
 
-let exampleQsItems = [ "test"; trimEnd """ "test1", "test2" """; """ "test3", """ ]
+let exampleQsItems = [ "\"test\""; trimEnd """ "test1", "test2" """; """ "test3", """ ]
 
-let exampleValueList = [
+let exampleQuotedStringList = [
     """[
     "Test"
   ]"""
@@ -306,30 +308,129 @@ let exampleProjectList = [
 let exampleAttachedProjectList = [
     """attached_projects = [
   ]"""
+
     """attached_projects = [
     {
       project = "Config - IYKYK"
       envs = [
       ]
     }
-  ]"""
+    ]"""
+
     """attached_projects = [
-    {
-      project = "Config - IYKYK"
-      envs = [
-      ]
-    },
-    {
-      project = "apl 3"
-      envs = [
-        {
-          id = local.apl3.env1
-          vars = {
+      {
+        project = "Config - IYKYK"
+        envs = [
+        ]
+      },
+      {
+        project = "apl 3"
+        envs = [
+          {
+            id = local.apl3.env1
+            vars = {
+            }
           }
-        }
-      ]
-    }
+        ]
+      }
+    ]"""
+
+    // 3
+    """attached_projects = [
   ]"""
+
+    // 4
+    """attached_projects = [
+      {
+        project = "Test this mess"
+        envs = [
+        ]
+      }
+    ]"""
+
+    // 5
+    """attached_projects = [
+      {
+        project = "Test this mess"
+        envs = [
+          {
+            id = main.proj1.env1
+            vars = {
+              "Project.ITest" = "https://abc_+-{}"
+            }
+          }
+        ]
+      }
+    ]"""
+    // 6
+    """attached_projects = [
+      {
+        project = "Test this mess"
+        envs = [
+          {
+            id = main.proj1.env1
+            vars = {
+              "Project.ITest" = "https://abc_+-{}"
+              "Project.ITest.Second" = true
+            }
+          }
+        ]
+      }
+    ]"""
+
+    // 7
+    """attached_projects = [
+      {
+        project = "Test this mess"
+        envs = [
+          {
+            id = main.proj1.env1
+            vars = {
+              "Project.ITest" = "https://abc_+-{}"
+              "Project.Tenant.Common.Subsets"  = jsonencode({
+                Test = 1
+              })
+            }
+          }
+        ]
+      }
+    ]"""
+    // 8
+    """attached_projects = [
+      {
+        project = "Test this mess"
+        envs = [
+          {
+            id = main.proj1.env1
+            vars = {
+              "Project.ITest" = "https://abc_+-{}"
+              "Project.Tenant.Common.Subsets"  = jsonencode({
+                Test = 1
+
+              })
+            }
+          }
+        ]
+      }
+    ]"""
+
+    // 9
+    """attached_projects = [
+      {
+        project = "Test this mess"
+        envs = [
+          {
+            id = main.proj1.env1
+            vars = {
+              "Project.ITest" = "https://abc_+-{}"
+              "Project.Tenant.Common.Subsets"  = jsonencode({
+                "Test" = 1
+              })
+            }
+          }
+        ]
+      }
+    ]"""
 ]
 
 let jsonEncodeExamples = [
@@ -416,6 +517,8 @@ let exampleInput =
           vars = {
             "Project.ITest" = "https://abc_+-{}"
             "Project.Tenant.Common.Subsets"  = jsonencode({
+              Test = 1
+
             })
           }
         }

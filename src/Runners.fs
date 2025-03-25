@@ -166,11 +166,11 @@ let runSamples announceCategories =
 
         "SettingBlock", Samples.exampleSettingBlocks |> runList (createRunHarness settingBlockParser)
 
-        "values list",
+        "csv quoted list",
         Samples.exampleQsItems
         |> runList (createRunHarness (ws >>. csvParser quotedString))
 
-        "ValueList", Samples.exampleValueList |> runList (createRunHarness qsListParser)
+        "QuotedString List", Samples.exampleQuotedStringList |> runList (createRunHarness qsListParser)
 
         "ProjectEnvs", Samples.examplePEnv |> runList (createRunHarness projectEnvParser)
 
@@ -178,7 +178,9 @@ let runSamples announceCategories =
 
         "ProjectList", Samples.exampleProjectList |> runList (createRunHarness projectListParser)
 
-        "exampleAttachedProjectList", Samples.exampleAttachedProjectList |> runList (createRunHarness projectsParser)
+        "exampleAttachedProjectList",
+        Samples.exampleAttachedProjectList
+        |> runList (createRunHarness attachedProjectsParser)
 
         "JsonEncode",
         Samples.jsonEncodeExamples

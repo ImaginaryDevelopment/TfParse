@@ -158,25 +158,26 @@ let csvParser p =
     let optComma = ws >>. opt (pchar ',') .>> ws |>> fun x -> ()
 
     let items =
-        ws
-        >>. choice [
-            //     attempt (sepEndBy p (ws >>. pchar ',' .>> ws) <??> "SepEndBy")
-            //     attempt (commaSepBy p)
-            //     // handle a single item, no comma list
-            //     (ws >>. p .>> ws |>> fun x -> [ x ]) <??> "SingleCsvItem"
-            many (ws >>. p .>> optComma)
-        ]
+        ws >>. many1 (ws >>. p <??> "csv-item" .>> optComma .>> ws)
+        //     attempt (sepEndBy p (ws >>. pchar ',' .>> ws) <??> "SepEndBy")
+        //     attempt (commaSepBy p)
+        //     // handle a single item, no comma list
+        //     (ws >>. p .>> ws |>> fun x -> [ x ]) <??> "SingleCsvItem"
         .>> ws
-        <??> "csvParser"
 
-    items
+    items <??> "csvParser"
+
+let defaultEmptyList parseResult =
+    parseResult |>> fun x -> x |> Option.defaultValue List.empty
 
 let myBetween lParser rParser bodyParser =
-    between (lParser >>. ws) (rParser >>. ws) (bodyParser <?> "array body")
+    // between (lParser >>. ws) (ws .>> rParser) (bodyParser <?> "between-body")
+    between (lParser >>. ws) (ws .>> rParser) bodyParser
 
 // supports empty lists, trailing commas
 let arrayParser p =
-    myBetween (pchar '[') (pchar ']') (csvParser p)
+    myBetween (pchar '[') (pchar ']') (attempt (opt (csvParser p)) <?> "array-body" |> defaultEmptyList .>> ws)
+    <?> "array"
 // (pchar '[') >>. (ws >>. (csvParser p) .>> ws) .>> (pchar ']') <?> "array"
 
 // does not support commas in numbers
@@ -331,29 +332,30 @@ let projectEnvParser =
 
 // [ items ]
 let envsListParser =
-    let items =
-        csvParser (projectEnvParser |>> fun (envId, vars) -> { EId = envId; Vars = vars })
-
-    myBetween (pchar '[') (pchar ']') (ws >>. attempt items .>> ws) <?> "EnvsList"
+    let item = projectEnvParser |>> fun (envId, vars) -> { EId = envId; Vars = vars }
+    arrayParser item <?> "EnvsList"
 
 
 // envs = [ ..., ... ]
-let envsBlockParser = lEqR (pstring "envs") envsListParser |>> snd <?> "EnvsBlock"
+let envsBlockParser = lEqR (pstring "envs") envsListParser |>> snd <??> "EnvsBlock"
 
 // { project = ... \r\n envs = [ ... ]}
 let projectParser =
-    let projectLine = lEqR (pstring "project") quotedString |>> snd
-    let bodyParser = ws >>. projectLine .>>. (ws >>. envsBlockParser .>> ws)
+    let projectLine = lEqR (pstring "project") quotedString |>> snd <??> "Project-Line"
+
+    let bodyParser =
+        ws >>. projectLine .>>. (ws >>. envsBlockParser .>> ws) <??> "Project-Body"
 
     myBetweenChars '{' '}' bodyParser
     |>> fun (pl, envs) -> { Project = pl; Envs = envs }
     <?> "Project"
 
 let projectListParser =
-    myBetweenChars '[' ']' (csvParser projectParser) <??> "ProjectList"
+    // myBetweenChars '[' ']' (csvParser projectParser) <??> "ProjectList"
+    arrayParser projectParser <?> "ProjectList-Array"
 
-let projectsParser =
-    lEqR (pstring "attached_projects") projectListParser |>> snd <??> "Projects"
+let attachedProjectsParser =
+    lEqR (pstring "attached_projects") projectListParser |>> snd <?> "Projects"
 
 let mParser: Parser<ModuleSetting, unit> =
     ws
@@ -366,7 +368,7 @@ let mParser: Parser<ModuleSetting, unit> =
 
         attempt settingBlockParser |>> fun x -> ModuleSetting.SettingBlock x
 
-        projectsParser |>> ModuleSetting.AttachedProjects
+        attachedProjectsParser |>> ModuleSetting.AttachedProjects
 
         attempt unquotedSetting |>> ModuleSetting.Setting
 
