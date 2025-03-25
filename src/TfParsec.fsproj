@@ -10,7 +10,9 @@
 
   <ItemGroup>
     <Compile Include="BReuse.fs" />
+    <Compile Include="Parsers.fs" />
     <Compile Include="Samples.fs" />
+    <Compile Include="Runners.fs" />
     <Compile Include="Library.fs" />
   </ItemGroup>
 

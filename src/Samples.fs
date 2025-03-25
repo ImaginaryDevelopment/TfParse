@@ -1,12 +1,44 @@
+//cspell: ignore jsonencode
 module TfParse.Samples
 
 open BReuse
 
-let simpleVersion = "version = \"1.0.0\""
+
+let wsSamples = [ ""; " "; "\t"; "\r"; "\r\n"; "\n" ]
+
+let simpleVersion = [
+    "version = \"1.0.0\""
+    "version=\"1.0.0\""
+    "version= \"1.0.0\""
+    "version =\"1.0.0\""
+]
 
 let simpleSettings = [ "version = \"1.0.0\""; "enabled = true" ]
 
 let valuesSimple = [ "1"; "true"; "octopus"; "\"octopus\"" ]
+
+let csvExamples = [
+    "1"
+    // trailing comma
+    "2,"
+    """ 3, "true" """
+
+    """ "test", """
+    // mixed list
+    """ 5.23,
+      -5.45,
+
+      5
+  """
+    // multi-line mixed with trailing comma
+    """ 5.23,
+      -5.45,
+
+      5,
+  """
+]
+
+let arrayExamples = [ "[1,2]"; "[ 1, 2 ]"; "[ 1 , 2 ]"; "[ true, 3,]"; "[ true, 3, ]" ]
 
 let commentSamples = [ "# hi\n"; "// hi\r"; " # hello . _ world\r\n"; " # hello . _ world\n\r" ]
 let lEqRSamples = [ "a=b"; "a = b"; "a =b"; "a= b" ]
@@ -291,6 +323,37 @@ let exampleAttachedProjectList = [
   ]"""
 ]
 
+let jsonEncodeExamples = [
+    """jsonencode({
+    SubSets= [
+    ]
+  })
+  """
+
+    """jsonencode({
+    SubSets = [
+    ]
+  })
+  """
+
+    """jsonencode({
+    SubSets = [
+      1
+    ]
+  })
+  """
+
+    """jsonencode({
+    SubSets= [
+      {
+        SubsetName = "Hello_ +-=/.,;:'Subset"
+      }
+    ]
+  })
+  """
+
+]
+
 let exampleMs = [
     """   # Optional: Add security group definitions"""
     """
@@ -343,6 +406,8 @@ let exampleInput =
           id = main.proj1.env1
           vars = {
             "Project.ITest" = "https://abc_+-{}"
+            "Project.Tenant.Common.Subsets"  = jsonencode({
+            })
           }
         }
       ]
