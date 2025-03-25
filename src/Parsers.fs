@@ -133,8 +133,6 @@ let identifier: Parser<string, unit> =
     |>> (fun (first, rest) -> first + rest)
     <?> "identifier"
 
-let runIdentifierParser input =
-    createRunHarness "identifier" identifier input
 // Parser for an integer number
 let integer: Parser<int, unit> = pint32 <?> "integer"
 
@@ -151,10 +149,10 @@ let csvParser p =
     let items =
         ws
         >>. choice [
-            attempt (sepEndBy p (attempt ws >>. pchar ',' .>> attempt ws))
-            attempt (sepBy p (attempt ws >>. pchar ',' .>> attempt ws))
+            attempt (sepEndBy p (ws >>. pchar ',' .>> ws))
+            attempt (sepBy p (ws >>. pchar ',' .>> ws))
             // handle a single item, no comma list
-            (attempt ws >>. p .>> attempt ws) |>> fun x -> [ x ]
+            (ws >>. p .>> ws) |>> fun x -> [ x ]
         ]
         <?> "csvParser"
         .>> ws
@@ -166,7 +164,7 @@ let myBetween lParser rParser bodyParser =
 
 // supports empty lists, trailing commas
 let arrayParser p =
-    myBetween (pchar '[') (pchar ']') (attempt ws >>. attempt p .>> attempt ws)
+    myBetween (pchar '[') (pchar ']') (ws >>. (csvParser p) .>> ws)
 
 let simpleValueParser: Parser<SettingValue, unit> =
     choice [
@@ -203,6 +201,7 @@ module JsonEncode =
             jsonObject |>> SettingValue.Other
             // support an array of simple values, or objects, not arrays
             arrayParser (jsonObject |>> SettingValue.Other <|> simpleValueParser)
+            |>> fun x -> SettingValue.Array x
         ]
     // Parser for the jsonencode function call
     let jsonencodeParser: Parser<_, unit> =
@@ -301,8 +300,8 @@ let myBetweenChars l r bodyParser =
     myBetween (pchar l) (pchar r) (ws >>. attempt bodyParser .>> ws)
 
 let qsListParser =
-    let items = csvParser quotedString
-    let list = arrayParser (ws >>. attempt items .>> ws)
+    let items = quotedString
+    let list = arrayParser items
     list
 
 let valueListBlockParser = lEqR (ws >>. identifier) qsListParser

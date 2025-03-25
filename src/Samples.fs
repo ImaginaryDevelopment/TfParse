@@ -1,4 +1,4 @@
-//cspell: ignore jsonencode
+//cspell: ignore IYKYK, hostnames
 module TfParse.Samples
 
 open BReuse

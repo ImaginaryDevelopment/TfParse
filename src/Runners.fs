@@ -1,3 +1,4 @@
+//cspell: ignore octopusdeploy
 module TfParse.Runners
 
 open FParsec
