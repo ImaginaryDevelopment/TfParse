@@ -38,6 +38,21 @@ let runSettingParser indent (input: string) =
     | Success((k, v), _, _) -> sprintf "Parsed Setting: %s = %A" k v |> Result.Ok
     | Failure(errMsg, _, _) -> Result.Error(sprintf "%sParsing failed: %s" indent errMsg, "S Parser")
 
+let runAParser p input =
+    match run p input with
+    | Success(result, _, p) -> Result.Ok(result, p)
+    | Failure(errMsg, pe, us) ->
+        eprintfn "Parsing failed: %s" errMsg
+        eprintfn "Msgs:"
+
+        pe.Messages
+        |> getErrors
+        |> Option.iter (Seq.iter (fun em -> eprintfn "\t%A:%A" (em.GetType().Name) em.Type))
+
+        eprintfn "PE: %A" pe
+        Result.Error(errMsg, pe, us)
+// failwithf "Parser input: '%s'" input
+
 // Helper function to run the parser
 let runParser (input: string) =
     match run moduleParser input with
@@ -56,10 +71,15 @@ let runParser (input: string) =
         eprintfn "PE: %A" pe
         failwithf "Parser input: '%s'" input
 
+type AnnounceSettings = {
+    AnnounceCategories: bool
+    AnnounceSuccess: bool
+}
+
 let runSamples announceCategories =
     let runList parser items : Result<string, string * string> list =
         items
-        |> List.mapi (fun i item ->
+        |> List.map (fun item ->
             // printfn "%s%i:" indent i
 
             try
@@ -68,18 +88,57 @@ let runSamples announceCategories =
             with ex ->
                 Result.Error(ex.Message, ex.Message))
 
+    let runListChecked (parser: Parser<_, unit>) f items : Result<string, string * string> list =
+        items
+        |> List.map (fun (item, expected) ->
+            try
+                let actual = run parser item
+
+                f expected (item, actual)
+            with ex ->
+                Result.Error(ex.Message, ex.Message))
+
     let i = "\t"
+
+    // let csvChecker expected (stream: CharStream<_>, actual: Reply<_ list>) : Result<_, string * string> =
+
+    //     let result = replyToParserResult stream actual
+
+    //     match result with
+    //     | Success(items, _, _) ->
+    //         if items.Length = expected then
+    //             Result.Ok(string items)
+    //         else
+    //             Result.Error(sprintf "Expected: %i, Actual (%i) %A" expected items.Length items, "")
+
+    //     | Failure(m, x, y) -> Result.Error(m, "")
+
+
+    let expectedLengthChecker expected (item, parseResult: ParserResult<_ list, _>) : Result<_, string * string> =
+
+
+        match parseResult with
+        | Success(items, _, _) ->
+            if items.Length = expected then
+                Result.Ok(string items)
+            else
+                Result.Error(sprintf "Expected: %i, Actual (%i) %A" expected items.Length items, "")
+
+        | Failure(m, x, y) -> Result.Error(m, "")
+
+    let csvRunner = runListChecked (csvParser simpleValueParser) expectedLengthChecker
 
     [
 
         "Space", Samples.wsSamples |> List.map (createRunHarness ws)
+        "Int", Samples.intSamples |> List.map (createRunHarness integer)
         "Value", Samples.valuesSimple |> List.map (createRunHarness simpleValueParser)
 
         "Comment", Samples.commentSamples |> List.map (createRunHarness singleLineComment)
 
         "Version", Samples.simpleVersion |> runList (createRunHarness versionParser)
 
-        "Csv", Samples.csvExamples |> List.map (createRunHarness (csvParser simpleValueParser))
+        "Csv", csvRunner Samples.csvExamples
 
         "SimpleArray",
         Samples.arrayExamples

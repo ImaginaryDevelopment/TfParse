@@ -73,7 +73,7 @@ let getErrors (erm: ErrorMessageList) =
 //             x
 
 // Define a parser for whitespace
-let ws = skipMany (pchar ' ' <|> pchar '\t' <|> pchar '\n' <|> pchar '\r')
+let ws = skipMany (pchar ' ' <|> pchar '\t' <|> pchar '\n' <|> pchar '\r') <??> "ws"
 
 // Parser for single-line comments (either # or //)
 let singleLineComment: Parser<string, unit> =
@@ -134,7 +134,13 @@ let identifier: Parser<string, unit> =
     <?> "identifier"
 
 // Parser for an integer number
+// does not appear to consume commas
+// will consume just the 1 when given 1.5
 let integer: Parser<int, unit> = pint32 <?> "integer"
+
+let intDotIntParser =
+    integer .>>. (pchar '.' >>. notFollowedBy (pchar '-')) .>>. integer
+    |>> fun ((w, ()), dec) -> float w + (0.1 * float dec)
 
 // Parser for a floating-point number
 let floatNumber: Parser<float, unit> = pfloat <?> "float"
@@ -143,19 +149,22 @@ let floatNumber: Parser<float, unit> = pfloat <?> "float"
 let boolean: Parser<bool, unit> =
     (pstring "true" >>% true) <|> (pstring "false" >>% false) <?> "boolean"
 
+let commaSepBy p =
+    sepBy p (ws >>. pchar ',' .>> ws) <??> "SepBy"
+
 // any type of item comma delimited
 // supports trailing commas, single item lists
 let csvParser p =
     let items =
         ws
         >>. choice [
-            attempt (sepEndBy p (ws >>. pchar ',' .>> ws))
-            attempt (sepBy p (ws >>. pchar ',' .>> ws))
+            attempt (sepEndBy p (ws >>. pchar ',' .>> ws) <??> "SepEndBy")
+            attempt (commaSepBy p)
             // handle a single item, no comma list
-            (ws >>. p .>> ws) |>> fun x -> [ x ]
+            (ws >>. p .>> ws |>> fun x -> [ x ]) <??> "SingleCsvItem"
         ]
-        <?> "csvParser"
         .>> ws
+        <??> "csvParser"
 
     items
 
@@ -164,10 +173,13 @@ let myBetween lParser rParser bodyParser =
 
 // supports empty lists, trailing commas
 let arrayParser p =
-    myBetween (pchar '[') (pchar ']') (ws >>. (csvParser p) .>> ws)
+    myBetween (pchar '[') (pchar ']') (csvParser p)
+// (pchar '[') >>. (ws >>. (csvParser p) .>> ws) .>> (pchar ']') <?> "array"
 
+// does not support commas in numbers
 let simpleValueParser: Parser<SettingValue, unit> =
     choice [
+        attempt intDotIntParser |>> Float
         integer |>> Int
         floatNumber |>> Float
         boolean |>> Bool
@@ -392,6 +404,14 @@ let runSettingParser indent (input: string) =
     match run unquotedSetting input with
     | Success((k, v), _, _) -> sprintf "Parsed Setting: %s = %A" k v |> Result.Ok
     | Failure(errMsg, _, _) -> Result.Error(sprintf "%sParsing failed: %s" indent errMsg, "S Parser")
+
+let replyToParserResult (stream: CharStream<_>) (reply: Reply<_>) =
+
+    if reply.Status = Ok then
+        Success(reply.Result, stream.UserState, stream.Position)
+    else
+        let error = ParserError(stream.Position, stream.UserState, reply.Error)
+        Failure(error.ToString(stream), error, stream.UserState)
 
 // Helper function to run the parser
 let runParser (input: string) =

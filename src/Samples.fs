@@ -6,6 +6,8 @@ open BReuse
 
 let wsSamples = [ ""; " "; "\t"; "\r"; "\r\n"; "\n" ]
 
+let intSamples = [ "0"; "1,"; "1,2"; "1.2" ]
+
 let simpleVersion = [
     "version = \"1.0.0\""
     "version=\"1.0.0\""
@@ -16,29 +18,36 @@ let simpleVersion = [
 let simpleSettings = [ "version = \"1.0.0\""; "enabled = true" ]
 
 let valuesSimple = [ "1"; "true"; "octopus"; "\"octopus\"" ]
+let commaSepByExamples = [ "0,1", 2; "1,2", 2; "1,2,3", 3; "1, 2,3", 3; "1 ,2", 2 ]
 
 let csvExamples = [
-    "1"
+    "0", 1
     // trailing comma
-    "2,"
-    """ 3, "true" """
+    "1,", 1
+    "2, 2 ", 2
+    "3 , 2 ", 2
+    "4 , 3, ", 2
+    "5 , 3,4 , ", 3
+    """ 6, "true" """, 2
 
-    """ "test", """
+    """ "test", """, 1
     // mixed list
-    """ 5.23,
-      -5.45,
+    """ 8.23,
+      -8.45,
 
-      5
-  """
+      8
+  """,
+    3
     // multi-line mixed with trailing comma
-    """ 5.23,
-      -5.45,
+    """ 9.23,
+      -9.45,
 
-      5,
-  """
+      9,
+  """,
+    3
 ]
 
-let arrayExamples = [ "[1,2]"; "[ 1, 2 ]"; "[ 1 , 2 ]"; "[ true, 3,]"; "[ true, 3, ]" ]
+let arrayExamples = [ "[0,2]"; "[ 1, 2 ]"; "[ 2 , 2 ]"; "[ true, 4,]"; "[ true, 5, ]" ]
 
 let commentSamples = [ "# hi\n"; "// hi\r"; " # hello . _ world\r\n"; " # hello . _ world\n\r" ]
 let lEqRSamples = [ "a=b"; "a = b"; "a =b"; "a= b" ]
