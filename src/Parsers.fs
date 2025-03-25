@@ -155,13 +155,16 @@ let commaSepBy p =
 // any type of item comma delimited
 // supports trailing commas, single item lists
 let csvParser p =
+    let optComma = ws >>. opt (pchar ',') .>> ws |>> fun x -> ()
+
     let items =
         ws
         >>. choice [
-            attempt (sepEndBy p (ws >>. pchar ',' .>> ws) <??> "SepEndBy")
-            attempt (commaSepBy p)
-            // handle a single item, no comma list
-            (ws >>. p .>> ws |>> fun x -> [ x ]) <??> "SingleCsvItem"
+            //     attempt (sepEndBy p (ws >>. pchar ',' .>> ws) <??> "SepEndBy")
+            //     attempt (commaSepBy p)
+            //     // handle a single item, no comma list
+            //     (ws >>. p .>> ws |>> fun x -> [ x ]) <??> "SingleCsvItem"
+            many (ws >>. p .>> optComma)
         ]
         .>> ws
         <??> "csvParser"
