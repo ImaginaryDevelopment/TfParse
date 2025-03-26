@@ -33,23 +33,6 @@ let runSettingParser indent (input: string) =
     | Success((k, v), _, _) -> sprintf "Parsed Setting: %s = %A" k v |> Result.Ok
     | Failure(errMsg, _, _) -> Result.Error(sprintf "%sParsing failed: %s" indent errMsg, "S Parser")
 
-// let runParser (input: string) =
-//     match runOnString "main" moduleParser input with
-//     | Success(result, _, _) ->
-//         printfn "Parsed module: Source: %s, Version: %s" result.Source (result.Version |> Option.defaultValue "latest")
-//         printfn "Settings:"
-//         result.Settings |> List.iter (fun s -> printfn "\t%A" s)
-//     | Failure(errMsg, pe, us) ->
-//         eprintfn "Parsing failed: %s" errMsg
-//         eprintfn "Msgs:"
-
-//         pe.Messages
-//         |> getErrors
-//         |> Option.iter (Seq.iter (fun em -> eprintfn "\t%A:%A" (em.GetType().Name) em.Type))
-
-//         eprintfn "PE: %A" pe
-//         failwithf "Parser input: '%s'" input
-
 let runIdentifierParser input = createRunHarness identifier input
 
 let runUnquotedSParser (input: string) = createRunHarness unquotedSetting input
@@ -57,26 +40,6 @@ let runUnquotedSParser (input: string) = createRunHarness unquotedSetting input
 let runTObjectBodyParser input = createRunHarness tObjectBody input
 
 let runTObjectParser input = createRunHarness tObject input
-
-// let runSettingParser indent (input: string) =
-//     match runOnString "" unquotedSetting input with
-//     | Success((k, v), _, _) -> sprintf "Parsed Setting: %s = %A" k v |> Result.Ok
-//     | Failure(errMsg, _, _) -> Result.Error(sprintf "%sParsing failed: %s" indent errMsg, "S Parser")
-
-// let runAParser p input =
-//     match run p input with
-//     | Success(result, _, p) -> Result.Ok(result, p)
-//     | Failure(errMsg, pe, us) ->
-//         eprintfn "Parsing failed: %s" errMsg
-//         eprintfn "Msgs:"
-
-//         pe.Messages
-//         |> getErrors
-//         |> Option.iter (Seq.iter (fun em -> eprintfn "\t%A:%A" (em.GetType().Name) em.Type))
-
-//         eprintfn "PE: %A" pe
-//         Result.Error(errMsg, pe, us)
-// failwithf "Parser input: '%s'" input
 
 // Helper function to run the parser
 let runParser (input: string) =
@@ -103,7 +66,7 @@ let runParser (input: string) =
 
 let runValidationHarness (parser: MyParser<'t>) (fts: Samples.FullTestSample<'t>) : Result<string, string * string> =
 
-    let checkValidation pos state (validator: Samples.ValidatorType) : Result<'t, string * string> =
+    let checkValidation pos userState state (validator: Samples.ValidatorType) : Result<'t, string * string> =
         match state with
         | Result.Ok value ->
             match validator with
@@ -111,14 +74,14 @@ let runValidationHarness (parser: MyParser<'t>) (fts: Samples.FullTestSample<'t>
                 if f pos then
                     Result.Ok value
                 else
-                    Result.Error($"Position unexpected:Index:%i{pos.Index},%A{pos}", string value)
+                    Result.Error($"Position unexpected:Index:%i{pos.Index},%A{pos},US:%A{userState}", string value)
 
         | result -> result
 
     match runOnString "" parser fts.Input, fts.Expected with
     | Success(x: 't, _, pos), Result.Error() -> Result.Error($"Expected failure, finished at %A{pos}", string x)
-    | Failure(errMsg, _, us), Result.Ok v ->
-        Result.Error($"Expected success: %s{errMsg}", "US:" + string us.ParserStack)
+    | Failure(errMsg, pe, us), Result.Ok v ->
+        Result.Error($"Expected success at %i{pe.Position.Index}: %s{errMsg}", "US:" + string us.ParserStack)
     | Failure(_, _, _), Result.Error() -> Result.Ok "Parser Failed Successfully"
 
     | Success(x: 't, us, pos), Result.Ok expectedOpt ->
@@ -132,7 +95,7 @@ let runValidationHarness (parser: MyParser<'t>) (fts: Samples.FullTestSample<'t>
                     Result.Error($"Parser succeeded but expected: %A{expected}", $"US:%A{us.ParserStack};%A{x}")
 
         (state, fts.Validators)
-        ||> Seq.fold (checkValidation pos)
+        ||> Seq.fold (checkValidation pos us)
         |> function
             | Result.Ok _ -> sprintf "Parsed: %A ('%s')" x (String.truncate 10 fts.Input) |> Result.Ok
             | Result.Error(m1, m2) -> Result.Error(m1, m2)
@@ -158,6 +121,7 @@ let runSamples announceCategories =
         // "Space", Samples.wsSamples |> List.map (createRunHarness ws)
         "Space", Samples.wsSamples |> List.map (runValidationHarness ws)
         "Int", Samples.intSamples |> List.map (runValidationHarness integer)
+        "IntDotInt", Samples.idiSamples |> List.map (runValidationHarness intDotIntParser)
         "Value", Samples.valuesSimple |> List.map (createRunHarness settingValueParser)
 
         "Comment", Samples.commentSamples |> List.map (createRunHarness singleLineComment)
@@ -170,13 +134,17 @@ let runSamples announceCategories =
         "CsvTuple",
         Samples.csvTuple
         |> runList (runValidationHarness (csvItemParser integer .>>. csvItemParser integer))
-        "Csv",
-        Samples.csvExamples
-        |> runList (runValidationHarness (csvParser settingValueParser))
 
         "SimpleArray",
         Samples.arrayExamples
         |> List.map (createRunHarness (arrayParser settingValueParser))
+
+        "Csv",
+        Samples.csvExamples
+        |> runList (runValidationHarness (csvParser settingValueParser))
+
+
+
 
         "LEqR",
         Samples.lEqRSamples
@@ -208,9 +176,7 @@ let runSamples announceCategories =
 
         "QuotedString List", Samples.quotedStringList |> runList (createRunHarness qsListParser)
 
-        "JsonEncodeKvp",
-        Samples.jsonKeyValuePairExamples
-        |> runList (createRunHarness JsonEncode.keyValuePair)
+        "JsonEncodeKvp", Samples.jsonEncodeKvp |> runList (createRunHarness JsonEncode.keyValuePair)
 
         "JsonEncodeBody", Samples.jsonObjects |> runList (runValidationHarness JsonEncode.jsonEncodeBody)
         "JsonEncode",

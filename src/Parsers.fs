@@ -101,7 +101,8 @@ let getErrors (erm: ErrorMessageList) =
 
 // Define a parser for whitespace
 let ws: MyParser<unit> =
-    skipMany (pchar ' ' <|> pchar '\t' <|> pchar '\n' <|> pchar '\r') <??> "ws"
+    // skipMany (pchar ' ' <|> pchar '\t' <|> pchar '\n' <|> pchar '\r') <??> "ws"
+    spaces <?> "ws"
 
 // Parser for single-line comments (either # or //)
 let singleLineComment: MyParser<string> =
@@ -154,7 +155,7 @@ let stringLiteral: Parser<string, _> =
 
 // Parser for an identifier (starts with a letter or underscore, followed by letters, digits, or underscores)
 let identifier: Parser<string, _> =
-    many1Satisfy (fun c -> System.Char.IsLetter(c) || c = '_') <?> "identifier"
+    many1Satisfy (fun c -> System.Char.IsLetter c || c = '_') <?> "identifier"
     .>>. manySatisfy (fun c -> System.Char.IsLetterOrDigit(c) || c = '_' || c = '.')
     <?> "identifier continuation"
     |>> (fun (first, rest) -> first + rest)
@@ -177,7 +178,10 @@ let intDotIntParser =
               $"0.%i{i}" |> float)
     .>> pushState $"{wholePart}.{decPart}"
     <?> "intDotInt"
-    |>> fun ((w, ()), dec) -> (float w + dec)
+    |>> fun ((w, ()), dec) ->
+        (let r = if w >= 0 then float w + dec else float w - dec
+         //  printfn "Made intDotInt %i.%f = %f" w dec r
+         r)
 
 // Parser for a floating-point number
 let floatNumber: MyParser<float> = pfloat <?> "float"
@@ -186,28 +190,35 @@ let floatNumber: MyParser<float> = pfloat <?> "float"
 let boolean: MyParser<bool> =
     (pstring "true" >>% true) <|> (pstring "false" >>% false) <?> "boolean"
 
-// let commaSepBy p =
-//     sepBy p (ws >>. pchar ',' .>> ws) <??> "SepBy"
-
 let csvItemParser p =
-    let optComma = ws >>. opt (pchar ',') .>> ws |>> fun x -> ()
-    pushState "csv-item" >>. p .>> popState "csv-item" <??> "csv-item" .>> optComma
+    // let optComma = ws >>. opt (pchar ',') .>> ws |>> fun x -> ()
+    // p .>> attempt (eof <|> optComma) <??> "csv-item"
+    let optComma = attempt ws >>. opt (pchar ',') .>> attempt ws |>> fun x -> ()
+
+    pushState "csv-item" >>. ws >>. p .>> popState "csv-item" <??> "csv-item"
+    .>> attempt optComma
 
 // any type of item comma delimited
 // supports trailing commas, single item lists
 let csvParser p =
+    let trailOpt = opt (attempt (pchar ','))
+    ws >>. many (attempt (p .>> (ws .>> trailOpt .>> ws)))
+// let customMany1 = p
 
-    let items =
-        pushState "csvParser"
-        // >>. ws
-        >>. many1 (csvItemParser p)
-        //     attempt (sepEndBy p (ws >>. pchar ',' .>> ws) <??> "SepEndBy")
-        //     attempt (commaSepBy p)
-        //     // handle a single item, no comma list
-        //     (ws >>. p .>> ws |>> fun x -> [ x ]) <??> "SingleCsvItem"
-        .>> popState "csvParser"
+// let listParser =
+//     ws >>. sepBy customMany1 (ws >>. pchar ',' .>> ws) <?> "sep-by-list"
 
-    items <?> "csvParser"
+// let items =
+//     pushState "csvParser" >>. ws >>. listParser // many1 (csvItemParser p)
+//     // pushState "csvParser" >>. many1 (csvItemParser p)
+//     // >>. choice [ many1 (csvItemParser p); csvItemParser p |>> fun x -> [ x ] ]
+//     //     attempt (sepEndBy p (ws >>. pchar ',' .>> ws) <??> "SepEndBy")
+//     //     attempt (commaSepBy p)
+//     //     // handle a single item, no comma list
+//     //     (ws >>. p .>> ws |>> fun x -> [ x ]) <??> "SingleCsvItem"
+//     .>> popState "csvParser"
+
+// items <?> "csvParser"
 
 let defaultEmptyList parseResult =
     parseResult |>> fun x -> x |> Option.defaultValue List.empty
@@ -217,8 +228,18 @@ let myBetween lParser rParser bodyParser =
     between (lParser >>. ws) (ws .>> rParser) bodyParser
 
 // supports empty lists, trailing commas
+let emptyArray = pchar '[' .>> ws .>> pchar ']' .>> ws <?> "empty array"
+
 let arrayParser p =
-    myBetween (pchar '[') (pchar ']') (attempt (opt (csvParser p)) <?> "array-body" |> defaultEmptyList .>> ws)
+    let trailOpt = opt (attempt (pchar ','))
+    // let m1 = many1 (csvItemParser p)
+    // myBetween (pchar '[') (pchar ']') (attempt (opt (csvParser p)) <?> "array-body" |> defaultEmptyList .>> ws)
+    // myBetween (pchar '[') (pchar ']') (opt m1 <?> "array-body" |> defaultEmptyList .>> ws)
+    // myBetween (pchar '[') (trailOpt >>. pchar ']') (sepBy (ws >>. p .>> ws) (ws .>> pchar ',' .>> ws) .>> trailOpt)
+    choice [
+        attempt emptyArray |>> fun _ -> List.empty
+        between (pchar '[' >>. ws) (trailOpt >>. pchar ']') (many (attempt (p .>> (ws .>> trailOpt .>> ws))))
+    ]
     <?> "array"
 // (pchar '[') >>. (ws >>. (csvParser p) .>> ws) .>> (pchar ']') <?> "array"
 
@@ -241,16 +262,20 @@ let settingValueParser: Parser<SettingValue, _> =
     <??> "valueParser"
 
 
+let lEqR lParser rParser =
+    lParser .>> (ws .>> pstring "=" .>> ws |>> ignore) .>>. rParser
 
 // none of this appears to properly handle a list
 module JsonEncode =
 
+    // right side of equals
     let nestedParser, nestedParserRef = createParserForwardedToRef<SettingValue, _> ()
 
     // Parser for a key-value pair inside the jsonencode block
     let keyValuePair: Parser<string * SettingValue, _> =
-        pushState "keyValuePair" >>. (stringLiteral <|> identifier) .>> ws
-        .>>. (pchar '=' >>. ws >>. nestedParser)
+        pushState "keyValuePair"
+        >>. ws
+        >>. lEqR (stringLiteral <|> identifier) (ws >>. nestedParser .>> ws)
         .>> popState "keyValuePair"
         <??> "key-value pair"
 
@@ -262,22 +287,31 @@ module JsonEncode =
     let jsonObject: Parser<_ list, _> =
         between (pchar '{') (pchar '}') jsonEncodeBody <?> "JSON object"
 
+    // array of values, array of objects, empty array, object
     nestedParserRef.Value <-
-        choice [
-            settingValueParser
-            jsonObject |>> SettingValue.Other
+        ws
+        >>. choice [
             // support an array of simple values, or objects, not arrays
-            arrayParser (jsonObject |>> SettingValue.Other <|> settingValueParser)
-            |>> fun x -> SettingValue.Array x
+            attempt (
+                arrayParser settingValueParser <??> "NestedArray"
+                |>> fun x -> SettingValue.Array x
+            )
+            attempt (
+                arrayParser jsonObject
+                |>> fun x -> x |> List.map SettingValue.Other |> SettingValue.Array
+            )
+            attempt emptyArray >>% SettingValue.Array List.empty
+            attempt settingValueParser <??> "setting value"
+            jsonObject <??> "JsonObject" |>> SettingValue.Other
         ]
+        .>> ws
+        <?> "Nested"
 
     // Parser for the jsonencode function call
     let jsonencodeParser: Parser<_, _> =
         pstring "jsonencode" >>. ws >>. between (pchar '(') (pchar ')') jsonObject
         <?> "jsonencode block"
 
-let lEqR lParser rParser =
-    lParser .>> (ws .>> pstring "=" .>> ws |>> ignore) .>>. rParser
 
 let knownSetting text rParser =
     lEqR (pstring text) rParser |>> fun (_, r) -> r

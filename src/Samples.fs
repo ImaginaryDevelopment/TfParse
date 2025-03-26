@@ -41,6 +41,14 @@ let intSamples: FullTestSample<int> list =
         "1.2", Ok(Some 1), [ expectPosition 1 ]
     ]
 
+let idiSamples: FullTestSample<float> list =
+    ft [
+        "0.1", Ok(Some 0.1), List.empty
+        "12.34", Ok(Some 12.34), List.empty
+        "29.56", Ok(Some 29.56), List.empty
+        "-3.0", Ok(Some -3.0), List.empty
+    ]
+
 let simpleVersion: FullTestSample<string> list =
     ft [
         "version = \"1.0.0\"", Ok(Some "1.0.0"), List.empty
@@ -62,17 +70,19 @@ let csvItems: FullTestSample<_> list =
         // trailing comma
         "1,", isInt 1, [ expectPosition 2 ]
         "2,", isInt 2, [ expectPosition 2 ]
-        "3 , 2", isInt 3, [ expectPosition 3 ]
+        "3 , 2", isInt 3, [ expectPosition 4 ]
 
-        "4 , 3,", isInt 4, [ expectPosition 3 ]
+        "4 , 3,", isInt 4, [ expectPosition 4 ]
 
-        "5 , 3,4 ,", isInt 5, [ expectPosition 3 ]
+        "5 , 3,4 ,", isInt 5, [ expectPosition 4 ]
 
-        trimEnd """6, "true" """, isInt 6, [ expectPosition 2 ]
+        trimEnd """6, "true" """, isInt 6, [ expectPosition 3 ]
+        trimEnd """7,  "true" """, isInt 7, [ expectPosition 4 ]
+        trimEnd "8, \t \"true\"", isInt 8, [ expectPosition 5 ]
 
         "\"test\",", Ok(Some(Parsers.SettingValue.Str "test")), List.empty
         // mixed list
-        "8.23, -8.45, 8 ", Ok(Some(f' 8.23)), List.empty
+        "10.23, -8.45, 8 ", Ok(Some(f' 10.23)), List.empty
     // multi-line mixed with trailing comma
     // empty list
     // "", 0
@@ -80,9 +90,8 @@ let csvItems: FullTestSample<_> list =
 
 let csvTuple: FullTestSample<int * int> list =
     ft [
-        let i' = Parsers.SettingValue.Int
         "0,0", Ok(Some(0, 0)), [ expectPosition 3 ]
-        "0,0, ", Ok(Some(0, 0)), [ expectPosition 4 ]
+        "0,0, ", Ok(Some(0, 0)), [ expectPosition 5 ]
     ]
 
 let csvExamples: FullTestSample<Parsers.SettingValue list> list =
@@ -90,48 +99,60 @@ let csvExamples: FullTestSample<Parsers.SettingValue list> list =
         let i', f' = Parsers.SettingValue.Int, Parsers.SettingValue.Float
         let isInt i = Ok(Some [ i' i ])
         let is' = List.map i' >> Some >> Ok
-        "0", isInt 0, []
+        "0 ", is' [ 0 ], []
+        "1,2, ", is' [ 1; 2 ], []
         // trailing comma
-        "1,", isInt 1, [ expectPosition 1 ]
-        "2, 2", is' [ 2; 2 ], [ expectPosition 4 ]
-        "3 , 2", is' [ 3; 2 ], [ expectPosition 4 ]
+        "2,", isInt 2, [ expectPosition 2 ]
+        "3, 2", is' [ 3; 2 ], [ expectPosition 4 ]
+        "4 , 2", is' [ 4; 2 ], [ expectPosition 5 ]
 
-        "4 , 3,", is' [ 4; 3 ], [ expectPosition 6 ]
+        "5 , 3,", is' [ 5; 3 ], [ expectPosition 6 ]
 
-        "5 , 3,4 ,", is' [ 5; 3; 4 ], [ expectPosition 8 ]
+        "6 , 3,4 ,", is' [ 6; 3; 4 ], [ expectPosition 9 ]
 
-        trimEnd """ 6, "true" """,
+        // 7
+        """7,
+          true """,
         Ok(
-            Some[i' 6
+            Some[i' 7
                  Parsers.SettingValue.Bool true]
         ),
         List.empty
 
-        """ "test",""", Ok(Some[Parsers.SettingValue.Str "test"]), List.empty
-        // mixed list
-        """ 8.23,
-      -8.45,
+        // 8
+        trim """ "test",""", Ok(Some[Parsers.SettingValue.Str "test"]), List.empty
 
-      8
-    """,
-        Ok(Some [ f' 8.23; f' -8.45; i' 8 ]),
+        // 9, mixed list
+        """9.23,
+          -8.45,
+
+          8
+        """,
+        Ok(Some [ f' 9.23; f' -8.45; i' 8 ]),
         List.empty
-        // multi-line mixed with trailing comma
-        """ 9.23,
+
+        // 10, multi-line mixed with trailing comma
+        """10.23,
       -9.45,
 
       9,""",
         Ok(
-            Some[f' 9.23
+            Some[f' 10.23
                  f' -9.45
                  i' 9]
         ),
         List.empty
-    // empty list
-    // "", 0
+
     ]
 
-let arrayExamples = [ "[0,2]"; "[ 1, 2 ]"; "[ 2 , 2 ]"; "[ true, 4,]"; "[ true, 5, ]" ]
+let arrayExamples = [
+    "[0,2]"
+    "[ 1, 2 ]"
+    "[ 2 , 2 ]"
+    "[ 3, true]"
+    "[ true, 4, ]"
+    "[ true, 5,]"
+]
 
 let commentSamples = [ "# hi\n"; "// hi\r"; " # hello . _ world\r\n"; " # hello . _ world\n\r" ]
 
@@ -244,14 +265,30 @@ let quotedStringList = [
 
 ]
 
-let jsonKeyValuePairExamples = [
+let jsonEncodeKvp = [
+
     "Test = 1"
 
+
+    // 1
     """SubSets = [
     ]"""
 
+    // 2
     """SubSets=[
     ]"""
+
+    // 3
+    """SubSets=[]"""
+
+
+    // 4
+    """SubSets=[1]"""
+
+    // 5
+    """SubSets=[{Port=200}] 4"""
+
+    """SubSets = [ { "Port" = 200 } ] 5"""
 
     """SubSets = [
       {
