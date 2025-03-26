@@ -40,6 +40,33 @@ type ModuleBlock = {
     Settings: ModuleSetting list
 }
 
+type ParserState = { ParserStack: string list }
+
+type MyParser<'t> = Parser<'t, ParserState>
+
+let pushState (parserName: string) : MyParser<unit> =
+    updateUserState (fun state -> {
+        state with
+            ParserStack = parserName :: state.ParserStack
+    })
+
+let popState (parserName: string) : MyParser<unit> =
+    updateUserState (fun state ->
+        if state.ParserStack |> Seq.contains parserName |> not then
+            failwithf "Parser pop without push: '%s'" parserName
+
+        {
+            state with
+                ParserStack = state.ParserStack |> List.skipWhile (fun ps -> ps <> parserName) |> List.skip 1
+        })
+
+// let bridgeState (parser:Parser<_,unit>) x =
+//     let us = getUserState x
+//     let lifted = setUserState () x
+//     let ss = x.CreateSubstream(x.)
+
+//     parser lifted
+
 let check = char "\u2713"
 let xMark = char "\u2715"
 
@@ -73,60 +100,60 @@ let getErrors (erm: ErrorMessageList) =
 //             x
 
 // Define a parser for whitespace
-let ws = skipMany (pchar ' ' <|> pchar '\t' <|> pchar '\n' <|> pchar '\r') <??> "ws"
+let ws: MyParser<unit> =
+    skipMany (pchar ' ' <|> pchar '\t' <|> pchar '\n' <|> pchar '\r') <??> "ws"
 
 // Parser for single-line comments (either # or //)
-let singleLineComment: Parser<string, unit> =
+let singleLineComment: MyParser<string> =
     let sSpace = skipMany (pchar ' ' <|> pchar '\t' <|> pchar '\n' <|> pchar '\r')
 
     //(pstring "#" <|> pstring "//") >>. manyTill anyChar (skipNewline) |>> (fun _ -> "Single-line comment") <?> "single-line comment"
-    sSpace
+    pushState "singleLineComment"
+    >>. sSpace
     >>. (pstring "#" <|> pstring "//")
     >>. sSpace
     // >>. manyTill anyChar newline
     >>. restOfLine true
     <?> "single-line comment"
+    .>> popState "singleLineComment"
 
 // |> haltOnFailure "singleLineComment"
 
 // Parser for multi-line comments (between /* and */)
-let multiLineComment: Parser<string, unit> =
+let multiLineComment: MyParser<string> =
     between (pstring "/*") (pstring "*/") (manyCharsTill anyChar (pstring "*/"))
     |>> (fun _ -> "Multi-line comment")
     <?> "multi-line comment"
 
 // Parser that skips over whitespace and comments
-let commentLineParser: Parser<string, unit> =
+let commentLineParser: MyParser<string> =
     //many (skipMany (singleLineComment <|> multiLineComment)) >>% "Comment line" <?> "comment line"
     singleLineComment <?> "comment line"
 
 
 // Parser for a single character that is not a quote or backslash
-let nonEscapeChar: Parser<char, unit> =
+let nonEscapeChar: Parser<char, _> =
     satisfy (fun c -> c <> '"' && c <> '\\') <?> "non-escaped character"
 
 // Parser for escape sequences inside the string (e.g., \" or \\)
-let escapeSequence: Parser<char, unit> =
+let escapeSequence: Parser<char, _> =
     pchar '\\' >>. (anyOf "\"\\") <?> "escape sequence"
 
 // Parser for a quoted string (handling escapes and normal characters)
-let quotedString: Parser<string, unit> =
-    between (pchar '"') (pchar '"') (manyChars (nonEscapeChar <|> escapeSequence))
+let quotedString: MyParser<string> =
+    pushState "quotedString"
+    >>. between (pchar '"') (pchar '"') (manyChars (nonEscapeChar <|> escapeSequence))
+    .>> popState "quotedString"
     <?> "quoted string"
 
 
+
 // Define a parser for string literals (i.e., quoted strings)
-let stringLiteral: Parser<string, unit> =
+let stringLiteral: Parser<string, _> =
     between (pstring "\"") (pstring "\"") (manyChars (noneOf "\""))
 
-let createRunHarness title parser =
-    fun (input: string) ->
-        match run parser input with
-        | Success(x, _, _) -> sprintf "%s Parsed: %A ('%s')" title x (String.truncate 10 input) |> Result.Ok
-        | Failure(errMsg, _, _) -> Result.Error(sprintf "Parsing failed: %s" errMsg, sprintf "%s Parser" title)
-
 // Parser for an identifier (starts with a letter or underscore, followed by letters, digits, or underscores)
-let identifier: Parser<string, unit> =
+let identifier: Parser<string, _> =
     many1Satisfy (fun c -> System.Char.IsLetter(c) || c = '_') <?> "identifier"
     .>>. manySatisfy (fun c -> System.Char.IsLetterOrDigit(c) || c = '_' || c = '.')
     <?> "identifier continuation"
@@ -136,36 +163,51 @@ let identifier: Parser<string, unit> =
 // Parser for an integer number
 // does not appear to consume commas
 // will consume just the 1 when given 1.5
-let integer: Parser<int, unit> = pint32 <?> "integer"
+let integer: MyParser<int> = pint32 <?> "integer"
 
 let intDotIntParser =
-    integer .>>. (pchar '.' >>. notFollowedBy (pchar '-')) .>>. integer
-    |>> fun ((w, ()), dec) -> float w + (0.1 * float dec)
+    let mutable wholePart = 0
+    let mutable decPart = 0
+
+    integer
+    .>>. (pchar '.' >>. notFollowedBy (pchar '-'))
+    .>>. (integer
+          |>> fun i ->
+              decPart <- i
+              $"0.%i{i}" |> float)
+    .>> pushState $"{wholePart}.{decPart}"
+    <?> "intDotInt"
+    |>> fun ((w, ()), dec) -> (float w + dec)
 
 // Parser for a floating-point number
-let floatNumber: Parser<float, unit> = pfloat <?> "float"
+let floatNumber: MyParser<float> = pfloat <?> "float"
 
 // Parser for a boolean value (true or false)
-let boolean: Parser<bool, unit> =
+let boolean: MyParser<bool> =
     (pstring "true" >>% true) <|> (pstring "false" >>% false) <?> "boolean"
 
-let commaSepBy p =
-    sepBy p (ws >>. pchar ',' .>> ws) <??> "SepBy"
+// let commaSepBy p =
+//     sepBy p (ws >>. pchar ',' .>> ws) <??> "SepBy"
+
+let csvItemParser p =
+    let optComma = ws >>. opt (pchar ',') .>> ws |>> fun x -> ()
+    pushState "csv-item" >>. p .>> popState "csv-item" <??> "csv-item" .>> optComma
 
 // any type of item comma delimited
 // supports trailing commas, single item lists
 let csvParser p =
-    let optComma = ws >>. opt (pchar ',') .>> ws |>> fun x -> ()
 
     let items =
-        ws >>. many1 (ws >>. p <??> "csv-item" .>> optComma .>> ws)
+        pushState "csvParser"
+        // >>. ws
+        >>. many1 (csvItemParser p)
         //     attempt (sepEndBy p (ws >>. pchar ',' .>> ws) <??> "SepEndBy")
         //     attempt (commaSepBy p)
         //     // handle a single item, no comma list
         //     (ws >>. p .>> ws |>> fun x -> [ x ]) <??> "SingleCsvItem"
-        .>> ws
+        .>> popState "csvParser"
 
-    items <??> "csvParser"
+    items <?> "csvParser"
 
 let defaultEmptyList parseResult =
     parseResult |>> fun x -> x |> Option.defaultValue List.empty
@@ -181,8 +223,11 @@ let arrayParser p =
 // (pchar '[') >>. (ws >>. (csvParser p) .>> ws) .>> (pchar ']') <?> "array"
 
 // does not support commas in numbers
-let simpleValueParser: Parser<SettingValue, unit> =
-    choice [
+let settingValueParser: Parser<SettingValue, _> =
+    let parserName = "simpleValue"
+
+    pushState parserName
+    >>. choice [
         attempt intDotIntParser |>> Float
         integer |>> Int
         floatNumber |>> Float
@@ -192,6 +237,7 @@ let simpleValueParser: Parser<SettingValue, unit> =
         // quoted value
         quotedString |>> Str
     ]
+    .>> popState parserName
     <??> "valueParser"
 
 
@@ -199,86 +245,77 @@ let simpleValueParser: Parser<SettingValue, unit> =
 // none of this appears to properly handle a list
 module JsonEncode =
 
-    let nestedParser, nestedParserRef =
-        createParserForwardedToRef<SettingValue, unit> ()
+    let nestedParser, nestedParserRef = createParserForwardedToRef<SettingValue, _> ()
 
     // Parser for a key-value pair inside the jsonencode block
-    let keyValuePair: Parser<string * SettingValue, unit> =
-        (stringLiteral <|> identifier) .>> ws .>>. (pchar '=' >>. ws >>. nestedParser)
-        <?> "key-value pair"
+    let keyValuePair: Parser<string * SettingValue, _> =
+        pushState "keyValuePair" >>. (stringLiteral <|> identifier) .>> ws
+        .>>. (pchar '=' >>. ws >>. nestedParser)
+        .>> popState "keyValuePair"
+        <??> "key-value pair"
+
+    // might not need csv parser, example seen so far only have one prop
+    // might not even be csv
+    let jsonEncodeBody = csvParser keyValuePair <??> "Json Body"
 
     // Parser for a JSON object (a block of key-value pairs enclosed in curly braces)
-    let jsonObject: Parser<_ list, unit> =
-        between (pchar '{') (pchar '}') (csvParser keyValuePair) <?> "JSON object"
+    let jsonObject: Parser<_ list, _> =
+        between (pchar '{') (pchar '}') jsonEncodeBody <?> "JSON object"
 
     nestedParserRef.Value <-
         choice [
-            simpleValueParser
+            settingValueParser
             jsonObject |>> SettingValue.Other
             // support an array of simple values, or objects, not arrays
-            arrayParser (jsonObject |>> SettingValue.Other <|> simpleValueParser)
+            arrayParser (jsonObject |>> SettingValue.Other <|> settingValueParser)
             |>> fun x -> SettingValue.Array x
         ]
+
     // Parser for the jsonencode function call
-    let jsonencodeParser: Parser<_, unit> =
+    let jsonencodeParser: Parser<_, _> =
         pstring "jsonencode" >>. ws >>. between (pchar '(') (pchar ')') jsonObject
         <?> "jsonencode block"
-//
-//let jsonEncoded : Parser<obj, unit> =
-//    pstring "jsonencode" >>. ws >> between (pstring "({" >>. ws) (pstring "})" >>. ws) (
-//        many anyChar
-//    )
-//    |>> fun x -> x
 
 let lEqR lParser rParser =
     lParser .>> (ws .>> pstring "=" .>> ws |>> ignore) .>>. rParser
-
 
 let knownSetting text rParser =
     lEqR (pstring text) rParser |>> fun (_, r) -> r
 
 // Parser for an unquoted setting, which could be an identifier, a number, or a boolean
-let unquotedSetting: Parser<string * SettingValue, unit> =
+let unquotedSetting: MyParser<string * SettingValue> =
     //identifier .>> ((ws .>> pstring "="  .>> ws) |>> ignore ) .>>. valueParser |>> fun x -> x
-    ws >>. lEqR identifier simpleValueParser <??> "unquotedSetting"
+    ws >>. lEqR identifier settingValueParser <??> "unquotedSetting"
 
-
-let anySimpleSetting = ws >>. lEqR (identifier <|> stringLiteral) simpleValueParser
-
-let runUnquotedSParser (input: string) =
-    createRunHarness "US" unquotedSetting input
+let anySimpleSetting = ws >>. lEqR (identifier <|> stringLiteral) settingValueParser
 
 let tObjectBody =
     ws >>. many (ws >>. anySimpleSetting .>> ws) .>> ws <??> "tObjectBody"
 
-let runTObjectBodyParser input =
-    createRunHarness "tObjectBody" tObjectBody input
-
-let tObject: Parser<(string * SettingValue) list, unit> =
+let tObject: MyParser<(string * SettingValue) list> =
 
     // let tBody =
     // between (pchar '{' >>. ws) (pchar '}' >>. ws) (attempt (many unquotedSetting))
     between (pchar '{' >>. ws) (ws >>. pchar '}') (ws >>. tObjectBody) <?> "tObject"
 
-let runTObjectParser input =
-    createRunHarness "tObject" tObject input
-
 // Define a parser for the "source" keyword and its value
-let sourceParser: Parser<string, unit> =
+let sourceParser: MyParser<string> =
     //pstring "source" >>. ws >>. pstring "=" >>. ws >>. stringLiteral
     knownSetting "source" stringLiteral <?> "source"
 
 // Define a parser for the "version" keyword and its value (optional)
-let versionParser: Parser<string, unit> =
-    pstring "version"
+let versionParser: MyParser<string> =
+    pushState "version"
+    >>. pstring "version"
     >>. ws
     >>. pstring "="
     >>. ws
     >>. choice [ stringLiteral; quotedString ]
+    .>> popState "version"
     <?> "version"
 
 // assume one provider for now?
-let providersParser: Parser<(string * string) list, unit> =
+let providersParser: MyParser<(string * string) list> =
     knownSetting "providers" tObject <?> "providers"
     |>> function
         | [] -> List.empty
@@ -286,12 +323,13 @@ let providersParser: Parser<(string * string) list, unit> =
         | multi -> failwith "multi provider not implemented"
     <?> "providers"
 
-let descriptionBlockParser: Parser<string, unit> =
+let descriptionBlockParser: MyParser<string> =
     // let nonEotItem = manyChars (noneOf ['\r';'\n']) .>> newline
     let nonEotItem = charsTillString "EOT" false System.Int32.MaxValue
     let eotBlock = between (pstring "EOT" .>> ws) (pstring "EOT" >>. ws) nonEotItem
 
-    ws
+    pushState "description"
+    >>. ws
     >>. pstring "description"
     >>. ws
     >>. pchar '='
@@ -299,7 +337,7 @@ let descriptionBlockParser: Parser<string, unit> =
     >>. pstring "<<-"
     >>. ws
     >>. eotBlock
-
+    .>> popState "description"
 
 let tQObject =
     let tqObjectBody =
@@ -308,9 +346,8 @@ let tQObject =
     between (pchar '{' >>. ws) (ws >>. pchar '}') (ws >>. tqObjectBody)
     <?> "tqObject"
 
-let settingBlockParser: Parser<string * (string * SettingValue) list, unit> =
+let settingBlockParser: MyParser<string * (string * SettingValue) list> =
     lEqR (ws >>. identifier) tQObject <??> "setting block"
-
 
 let myBetweenChars l r bodyParser =
     myBetween (pchar l) (pchar r) (ws >>. attempt bodyParser .>> ws)
@@ -335,7 +372,6 @@ let envsListParser =
     let item = projectEnvParser |>> fun (envId, vars) -> { EId = envId; Vars = vars }
     arrayParser item <?> "EnvsList"
 
-
 // envs = [ ..., ... ]
 let envsBlockParser = lEqR (pstring "envs") envsListParser |>> snd <??> "EnvsBlock"
 
@@ -357,7 +393,7 @@ let projectListParser =
 let attachedProjectsParser =
     lEqR (pstring "attached_projects") projectListParser |>> snd <?> "Projects"
 
-let mParser: Parser<ModuleSetting, unit> =
+let mParser: MyParser<ModuleSetting> =
     ws
     >>. choice [
         attempt providersParser |>> fun x -> ModuleSetting.Providers(x)
@@ -381,7 +417,7 @@ let mParser: Parser<ModuleSetting, unit> =
     <?> "mParser"
 
 // Define the module parser that parses the whole module block
-let moduleParser: Parser<ModuleBlock, unit> =
+let moduleParser: MyParser<ModuleBlock> =
     let parseModuleBody =
         // Parse the source and version within the block
         sourceParser .>> ws
@@ -399,16 +435,9 @@ let moduleParser: Parser<ModuleBlock, unit> =
         Settings = s
     }
 
-let multiModule: Parser<ModuleBlock list, unit> = many moduleParser
+let multiModule: MyParser<ModuleBlock list> = many moduleParser
 
 
-let runVersionParser (input: string) =
-    createRunHarness "V" versionParser input
-
-let runSettingParser indent (input: string) =
-    match run unquotedSetting input with
-    | Success((k, v), _, _) -> sprintf "Parsed Setting: %s = %A" k v |> Result.Ok
-    | Failure(errMsg, _, _) -> Result.Error(sprintf "%sParsing failed: %s" indent errMsg, "S Parser")
 
 let replyToParserResult (stream: CharStream<_>) (reply: Reply<_>) =
 
@@ -417,21 +446,3 @@ let replyToParserResult (stream: CharStream<_>) (reply: Reply<_>) =
     else
         let error = ParserError(stream.Position, stream.UserState, reply.Error)
         Failure(error.ToString(stream), error, stream.UserState)
-
-// Helper function to run the parser
-let runParser (input: string) =
-    match run moduleParser input with
-    | Success(result, _, _) ->
-        printfn "Parsed module: Source: %s, Version: %s" result.Source (result.Version |> Option.defaultValue "latest")
-        printfn "Settings:"
-        result.Settings |> List.iter (fun s -> printfn "\t%A" s)
-    | Failure(errMsg, pe, us) ->
-        eprintfn "Parsing failed: %s" errMsg
-        eprintfn "Msgs:"
-
-        pe.Messages
-        |> getErrors
-        |> Option.iter (Seq.iter (fun em -> eprintfn "\t%A:%A" (em.GetType().Name) em.Type))
-
-        eprintfn "PE: %A" pe
-        failwithf "Parser input: '%s'" input

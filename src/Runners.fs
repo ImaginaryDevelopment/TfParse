@@ -19,11 +19,36 @@ let getErrors (erm: ErrorMessageList) =
                 Some(eml.Head, eml.Tail))
         |> Some
 
+let runOnString name p input =
+    runParserOnString p { ParserStack = List.empty } name input
+
 let inline createRunHarness parser =
     fun (input: string) ->
-        match run parser input with
+        match runOnString "" parser input with
         | Success(x, _, _) -> sprintf "Parsed: %A ('%s')" x (String.truncate 10 input) |> Result.Ok
-        | Failure(errMsg, _, _) -> Result.Error(sprintf "Parsing failed: %s" errMsg, "")
+        | Failure(errMsg, pe, ps) -> Result.Error(sprintf "Parsing failed: %s" errMsg, string ps.ParserStack)
+
+let runSettingParser indent (input: string) =
+    match runOnString "" unquotedSetting input with
+    | Success((k, v), _, _) -> sprintf "Parsed Setting: %s = %A" k v |> Result.Ok
+    | Failure(errMsg, _, _) -> Result.Error(sprintf "%sParsing failed: %s" indent errMsg, "S Parser")
+
+// let runParser (input: string) =
+//     match runOnString "main" moduleParser input with
+//     | Success(result, _, _) ->
+//         printfn "Parsed module: Source: %s, Version: %s" result.Source (result.Version |> Option.defaultValue "latest")
+//         printfn "Settings:"
+//         result.Settings |> List.iter (fun s -> printfn "\t%A" s)
+//     | Failure(errMsg, pe, us) ->
+//         eprintfn "Parsing failed: %s" errMsg
+//         eprintfn "Msgs:"
+
+//         pe.Messages
+//         |> getErrors
+//         |> Option.iter (Seq.iter (fun em -> eprintfn "\t%A:%A" (em.GetType().Name) em.Type))
+
+//         eprintfn "PE: %A" pe
+//         failwithf "Parser input: '%s'" input
 
 let runIdentifierParser input = createRunHarness identifier input
 
@@ -33,29 +58,29 @@ let runTObjectBodyParser input = createRunHarness tObjectBody input
 
 let runTObjectParser input = createRunHarness tObject input
 
-let runSettingParser indent (input: string) =
-    match run unquotedSetting input with
-    | Success((k, v), _, _) -> sprintf "Parsed Setting: %s = %A" k v |> Result.Ok
-    | Failure(errMsg, _, _) -> Result.Error(sprintf "%sParsing failed: %s" indent errMsg, "S Parser")
+// let runSettingParser indent (input: string) =
+//     match runOnString "" unquotedSetting input with
+//     | Success((k, v), _, _) -> sprintf "Parsed Setting: %s = %A" k v |> Result.Ok
+//     | Failure(errMsg, _, _) -> Result.Error(sprintf "%sParsing failed: %s" indent errMsg, "S Parser")
 
-let runAParser p input =
-    match run p input with
-    | Success(result, _, p) -> Result.Ok(result, p)
-    | Failure(errMsg, pe, us) ->
-        eprintfn "Parsing failed: %s" errMsg
-        eprintfn "Msgs:"
+// let runAParser p input =
+//     match run p input with
+//     | Success(result, _, p) -> Result.Ok(result, p)
+//     | Failure(errMsg, pe, us) ->
+//         eprintfn "Parsing failed: %s" errMsg
+//         eprintfn "Msgs:"
 
-        pe.Messages
-        |> getErrors
-        |> Option.iter (Seq.iter (fun em -> eprintfn "\t%A:%A" (em.GetType().Name) em.Type))
+//         pe.Messages
+//         |> getErrors
+//         |> Option.iter (Seq.iter (fun em -> eprintfn "\t%A:%A" (em.GetType().Name) em.Type))
 
-        eprintfn "PE: %A" pe
-        Result.Error(errMsg, pe, us)
+//         eprintfn "PE: %A" pe
+//         Result.Error(errMsg, pe, us)
 // failwithf "Parser input: '%s'" input
 
 // Helper function to run the parser
 let runParser (input: string) =
-    match run moduleParser input with
+    match runOnString "" moduleParser input with
     | Success(result, _, _) ->
         printfn "Parsed module: Source: %s, Version: %s" result.Source (result.Version |> Option.defaultValue "latest")
         printfn "Settings:"
@@ -71,10 +96,46 @@ let runParser (input: string) =
         eprintfn "PE: %A" pe
         failwithf "Parser input: '%s'" input
 
-type AnnounceSettings = {
-    AnnounceCategories: bool
-    AnnounceSuccess: bool
-}
+// type AnnounceSettings = {
+//     AnnounceCategories: bool
+//     AnnounceSuccess: bool
+// }
+
+let runValidationHarness (parser: MyParser<'t>) (fts: Samples.FullTestSample<'t>) : Result<string, string * string> =
+
+    let checkValidation pos state (validator: Samples.ValidatorType) : Result<'t, string * string> =
+        match state with
+        | Result.Ok value ->
+            match validator with
+            | Samples.ValidatorType.PositionExpectation f ->
+                if f pos then
+                    Result.Ok value
+                else
+                    Result.Error($"Position unexpected:Index:%i{pos.Index},%A{pos}", string value)
+
+        | result -> result
+
+    match runOnString "" parser fts.Input, fts.Expected with
+    | Success(x: 't, _, pos), Result.Error() -> Result.Error($"Expected failure, finished at %A{pos}", string x)
+    | Failure(errMsg, _, us), Result.Ok v ->
+        Result.Error($"Expected success: %s{errMsg}", "US:" + string us.ParserStack)
+    | Failure(_, _, _), Result.Error() -> Result.Ok "Parser Failed Successfully"
+
+    | Success(x: 't, us, pos), Result.Ok expectedOpt ->
+        let state: Result<'t, string * string> =
+            match expectedOpt with
+            | None -> Result.Ok x
+            | Some(expected: 't) ->
+                if expected = x then
+                    Result.Ok x
+                else
+                    Result.Error($"Parser succeeded but expected: %A{expected}", $"US:%A{us.ParserStack};%A{x}")
+
+        (state, fts.Validators)
+        ||> Seq.fold (checkValidation pos)
+        |> function
+            | Result.Ok _ -> sprintf "Parsed: %A ('%s')" x (String.truncate 10 fts.Input) |> Result.Ok
+            | Result.Error(m1, m2) -> Result.Error(m1, m2)
 
 let runSamples announceCategories =
     let runList parser items : Result<string, string * string> list =
@@ -88,65 +149,40 @@ let runSamples announceCategories =
             with ex ->
                 Result.Error(ex.Message, ex.Message))
 
-    let runListChecked (parser: Parser<_, unit>) f items : Result<string, string * string> list =
-        items
-        |> List.map (fun (item, expected) ->
-            try
-                let actual = run parser item
-
-                f expected (item, actual)
-            with ex ->
-                Result.Error(ex.Message, ex.Message))
-
     let i = "\t"
 
-    // let csvChecker expected (stream: CharStream<_>, actual: Reply<_ list>) : Result<_, string * string> =
 
-    //     let result = replyToParserResult stream actual
-
-    //     match result with
-    //     | Success(items, _, _) ->
-    //         if items.Length = expected then
-    //             Result.Ok(string items)
-    //         else
-    //             Result.Error(sprintf "Expected: %i, Actual (%i) %A" expected items.Length items, "")
-
-    //     | Failure(m, x, y) -> Result.Error(m, "")
-
-
-    let expectedLengthChecker expected (item, parseResult: ParserResult<_ list, _>) : Result<_, string * string> =
-
-
-        match parseResult with
-        | Success(items, _, _) ->
-            if items.Length = expected then
-                Result.Ok(string items)
-            else
-                Result.Error(sprintf "Expected: %i, Actual (%i) %A" expected items.Length items, "")
-
-        | Failure(m, x, y) -> Result.Error(m, "")
-
-    let csvRunner = runListChecked (csvParser simpleValueParser) expectedLengthChecker
+    // for samples where the length should be the total length
 
     [
-
-        "Space", Samples.wsSamples |> List.map (createRunHarness ws)
-        "Int", Samples.intSamples |> List.map (createRunHarness integer)
-        "Value", Samples.valuesSimple |> List.map (createRunHarness simpleValueParser)
+        // "Space", Samples.wsSamples |> List.map (createRunHarness ws)
+        "Space", Samples.wsSamples |> List.map (runValidationHarness ws)
+        "Int", Samples.intSamples |> List.map (runValidationHarness integer)
+        "Value", Samples.valuesSimple |> List.map (createRunHarness settingValueParser)
 
         "Comment", Samples.commentSamples |> List.map (createRunHarness singleLineComment)
 
-        "Version", Samples.simpleVersion |> runList (createRunHarness versionParser)
+        "Version", Samples.simpleVersion |> runList (runValidationHarness versionParser)
 
-        "Csv", csvRunner Samples.csvExamples
+        "CsvItem",
+        Samples.csvItems
+        |> runList (runValidationHarness (csvItemParser settingValueParser))
+        "CsvTuple",
+        Samples.csvTuple
+        |> runList (runValidationHarness (csvItemParser integer .>>. csvItemParser integer))
+        "Csv",
+        Samples.csvExamples
+        |> runList (runValidationHarness (csvParser settingValueParser))
 
         "SimpleArray",
         Samples.arrayExamples
-        |> List.map (createRunHarness (arrayParser simpleValueParser))
+        |> List.map (createRunHarness (arrayParser settingValueParser))
 
-        "LEqR", Samples.lEqRSamples |> List.map (createRunHarness (lEqR identifier identifier))
+        "LEqR",
+        Samples.lEqRSamples
+        |> List.map (runValidationHarness (lEqR identifier identifier))
 
-        "Identifier", Samples.identifierSamples |> List.map runIdentifierParser
+        "Identifier", Samples.identifierSamples |> List.map (runValidationHarness identifier)
 
 
         "UnquotedSetting", Samples.unquotedSettingSamples |> runList runUnquotedSParser
@@ -167,12 +203,21 @@ let runSamples announceCategories =
         "SettingBlock", Samples.exampleSettingBlocks |> runList (createRunHarness settingBlockParser)
 
         "csv quoted list",
-        Samples.exampleQsItems
+        Samples.quotedStringItems
         |> runList (createRunHarness (ws >>. csvParser quotedString))
 
-        "QuotedString List", Samples.exampleQuotedStringList |> runList (createRunHarness qsListParser)
+        "QuotedString List", Samples.quotedStringList |> runList (createRunHarness qsListParser)
 
-        "ProjectEnvs", Samples.examplePEnv |> runList (createRunHarness projectEnvParser)
+        "JsonEncodeKvp",
+        Samples.jsonKeyValuePairExamples
+        |> runList (createRunHarness JsonEncode.keyValuePair)
+
+        "JsonEncodeBody", Samples.jsonObjects |> runList (runValidationHarness JsonEncode.jsonEncodeBody)
+        "JsonEncode",
+        Samples.jsonEncodeExamples
+        |> runList (createRunHarness JsonEncode.jsonencodeParser)
+
+        "ProjectEnvs", Samples.projectEnv |> runList (createRunHarness projectEnvParser)
 
         "Project", Samples.exampleProj |> runList (createRunHarness projectParser)
 
@@ -182,9 +227,6 @@ let runSamples announceCategories =
         Samples.exampleAttachedProjectList
         |> runList (createRunHarness attachedProjectsParser)
 
-        "JsonEncode",
-        Samples.jsonEncodeExamples
-        |> runList (createRunHarness JsonEncode.jsonencodeParser)
         "Ms", Samples.exampleMs |> runList (createRunHarness mParser)
     ]
     |> List.iter (fun (title, results) ->

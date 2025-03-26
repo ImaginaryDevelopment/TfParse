@@ -3,56 +3,145 @@ module TfParse.Samples
 
 open BReuse
 
+type ValidatorType = PositionExpectation of (FParsec.Position -> bool)
 
-let wsSamples = [ ""; " "; "\t"; "\r"; "\r\n"; "\n" ]
+type FullTestSample<'t> = {
+    Input: string
+    Expected: Result<'t option, unit>
+    Validators: ValidatorType list
+}
 
-let intSamples = [ "0"; "1,"; "1,2"; "1.2" ]
+let ft items =
+    items
+    |> List.map (fun (i, exp, v) -> {
+        Input = i
+        Expected = exp
+        Validators = v
+    })
 
-let simpleVersion = [
-    "version = \"1.0.0\""
-    "version=\"1.0.0\""
-    "version= \"1.0.0\""
-    "version =\"1.0.0\""
-]
+let expectPosition i =
+    PositionExpectation(fun pos -> pos.Index = i)
+
+let wsSamples: FullTestSample<unit> list =
+    ft [
+        "", Ok None, [ expectPosition 0 ]
+        " ", Ok None, [ expectPosition 1 ]
+        "\t", Ok None, [ expectPosition 1 ]
+        "\r", Ok None, [ expectPosition 1 ]
+        "\r\n", Ok None, [ expectPosition 2 ]
+        "\n", Ok None, [ expectPosition 1 ]
+    ]
+
+let intSamples: FullTestSample<int> list =
+    ft [
+        "0", Ok(Some 0), [ expectPosition 1 ]
+        "1,", Ok(Some 1), [ expectPosition 1 ]
+        "1,2", Ok(Some 1), [ expectPosition 1 ]
+        // this is a float, but the int parsers behavior doesn't mind
+        "1.2", Ok(Some 1), [ expectPosition 1 ]
+    ]
+
+let simpleVersion: FullTestSample<string> list =
+    ft [
+        "version = \"1.0.0\"", Ok(Some "1.0.0"), List.empty
+        "version=\"1.0.0\"", Ok(Some "1.0.0"), List.empty
+        "version= \"1.0.0\"", Ok(Some "1.0.0"), List.empty
+        "version =\"1.0.0\"", Ok(Some "1.0.0"), List.empty
+    ]
 
 let simpleSettings = [ "version = \"1.0.0\""; "enabled = true" ]
 
-let valuesSimple = [ "1"; "true"; "octopus"; "\"octopus\"" ]
-let commaSepByExamples = [ "0,1", 2; "1,2", 2; "1,2,3", 3; "1, 2,3", 3; "1 ,2", 2 ]
+let valuesSimple = [ "1"; "true"; "octopus"; "\"octopus\""; "0" ]
+// let commaSepByExamples = [ "0,1", 2; "1,2", 2; "1,2,3", 3; "1, 2,3", 3; "1 ,2", 2 ]
 
-let csvExamples = [
-    "0", 1
-    // trailing comma
-    "1,", 1
-    "2, 2 ", 2
-    "3 , 2 ", 2
-    "4 , 3, ", 2
-    "5 , 3,4 , ", 3
-    """ 6, "true" """, 2
+let csvItems: FullTestSample<_> list =
+    ft [
+        let i', f' = Parsers.SettingValue.Int, Parsers.SettingValue.Float
+        let isInt i = Ok(Some(i' i))
+        "0", isInt 0, [ expectPosition 1 ]
+        // trailing comma
+        "1,", isInt 1, [ expectPosition 2 ]
+        "2,", isInt 2, [ expectPosition 2 ]
+        "3 , 2", isInt 3, [ expectPosition 3 ]
 
-    """ "test", """, 1
-    // mixed list
-    """ 8.23,
+        "4 , 3,", isInt 4, [ expectPosition 3 ]
+
+        "5 , 3,4 ,", isInt 5, [ expectPosition 3 ]
+
+        trimEnd """6, "true" """, isInt 6, [ expectPosition 2 ]
+
+        "\"test\",", Ok(Some(Parsers.SettingValue.Str "test")), List.empty
+        // mixed list
+        "8.23, -8.45, 8 ", Ok(Some(f' 8.23)), List.empty
+    // multi-line mixed with trailing comma
+    // empty list
+    // "", 0
+    ]
+
+let csvTuple: FullTestSample<int * int> list =
+    ft [
+        let i' = Parsers.SettingValue.Int
+        "0,0", Ok(Some(0, 0)), [ expectPosition 3 ]
+        "0,0, ", Ok(Some(0, 0)), [ expectPosition 4 ]
+    ]
+
+let csvExamples: FullTestSample<Parsers.SettingValue list> list =
+    ft [
+        let i', f' = Parsers.SettingValue.Int, Parsers.SettingValue.Float
+        let isInt i = Ok(Some [ i' i ])
+        let is' = List.map i' >> Some >> Ok
+        "0", isInt 0, []
+        // trailing comma
+        "1,", isInt 1, [ expectPosition 1 ]
+        "2, 2", is' [ 2; 2 ], [ expectPosition 4 ]
+        "3 , 2", is' [ 3; 2 ], [ expectPosition 4 ]
+
+        "4 , 3,", is' [ 4; 3 ], [ expectPosition 6 ]
+
+        "5 , 3,4 ,", is' [ 5; 3; 4 ], [ expectPosition 8 ]
+
+        trimEnd """ 6, "true" """,
+        Ok(
+            Some[i' 6
+                 Parsers.SettingValue.Bool true]
+        ),
+        List.empty
+
+        """ "test",""", Ok(Some[Parsers.SettingValue.Str "test"]), List.empty
+        // mixed list
+        """ 8.23,
       -8.45,
 
       8
-  """,
-    3
-    // multi-line mixed with trailing comma
-    """ 9.23,
+    """,
+        Ok(Some [ f' 8.23; f' -8.45; i' 8 ]),
+        List.empty
+        // multi-line mixed with trailing comma
+        """ 9.23,
       -9.45,
 
-      9,
-  """,
-    3
-// empty list
-// "", 0
-]
+      9,""",
+        Ok(
+            Some[f' 9.23
+                 f' -9.45
+                 i' 9]
+        ),
+        List.empty
+    // empty list
+    // "", 0
+    ]
 
 let arrayExamples = [ "[0,2]"; "[ 1, 2 ]"; "[ 2 , 2 ]"; "[ true, 4,]"; "[ true, 5, ]" ]
 
 let commentSamples = [ "# hi\n"; "// hi\r"; " # hello . _ world\r\n"; " # hello . _ world\n\r" ]
-let lEqRSamples = [ "a=b"; "a = b"; "a =b"; "a= b" ]
+
+let lEqRSamples: FullTestSample<string * string> list =
+    ft [
+        "a=b", Ok(Some("a", "b")), [ expectPosition 3 ]
+        "a = b", Ok(Some("a", "b")), [ expectPosition 5 ]
+        "a =b", Ok(Some("a", "b")), [ expectPosition 4 ]
+        "a= b", Ok(Some("a", "b")), [ expectPosition 4 ]
+    ]
 
 let breakOnTabLiteral text =
     match text |> String.indexOf "\\t" with
@@ -72,13 +161,20 @@ let simpleModule =
  vpc_id      = aws_vpc.test.id
 }"""
 
-let identifierSamples = [ "octopus"; "module.connector" ]
+let identifierSamples: FullTestSample<string> list =
+    ft [
+        "octopus", Ok None, [ expectPosition 7 ]
+        "module.connector", Ok(Some "module.connector"), List.empty
+        "id1", Ok None, [ expectPosition 3 ]
+        "local.envs.dev", Ok(Some "local.envs.dev"), List.empty
+    ]
 
 let unquotedSettingSamples = [
     """octopus = octopus """
     """octopus = octopus"""
     """octopus =octopus"""
     """octopus=octopus"""
+    "id1 = 2"
     "connector = module.connector"
     "   connector = module.connector"
     """octopus="octopus" """
@@ -111,68 +207,6 @@ let tObjectSamples = [
     }  """
 ]
 
-let examples = [
-    """module "my_module" {
-        source = "terraform-aws-modules/vpc/aws"
-        version = "2.0.0"
-    }"""
-
-    """module "my_module" {
-        source = "git::https://example.com/storage.git?ref=51d462976d84fdea54b47d80dcabbf680badcdb8"
-        version = "2.0.0"
-    }"""
-
-    """module "vpc" {
-  source = "terraform-aws-modules/vpc/aws"
-  version = "3.0.0"
-  name = "my-vpc"
-  cidr = "10.0.0.0/16"
-  enable_dns_support = true
-  enable_dns_hostnames = true
-  tags = {
-    Environment = "production"
-    Project     = "my-project"
-  }
-  # Optional: Specify custom VPC subnets
-  enable_nat_gateway = true
-  single_nat_gateway = true
-  # Optional: Add security group definitions
-  security_group_ids = [
-    "sg-12345678",
-    "sg-23456789"
-  ]
-  # Optional: Additional routing
-  private_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
-  public_subnets  = ["10.0.3.0/24", "10.0.4.0/24"]
-}
-module "s3_bucket" {
-  source = "terraform-aws-modules/s3-bucket/aws"
-  version = "2.1.0"
-  bucket = "my-unique-bucket-name"
-  acl    = "private"
-  tags = {
-    Environment = "production"
-    Project     = "my-project"
-  }
-}
-module "iam_role" {
-  source = "terraform-aws-modules/iam/aws//modules/iam-role"
-  version = "2.0.0"
-  role_name = "my-role"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Principal = {
-          Service = "ec2.amazonaws.com"
-        }
-        Action = "sts:AssumeRole"
-      }
-    ]
-  })"""
-
-]
 
 let exampleDescription = [
     """
@@ -193,29 +227,93 @@ let exampleSettingBlocks = [
   """
 ]
 
-let exampleQsItems = [ "\"test\""; trimEnd """ "test1", "test2" """; """ "test3", """ ]
+let quotedStringItems = [ "\"test\""; trimEnd """ "test1", "test2" """; """ "test3", """ ]
 
-let exampleQuotedStringList = [
-    """[
-    "Test"
-  ]"""
+let quotedStringList = [
 
     """[
-
-  ]"""
+      "Test"
+    ]"""
 
     """[
-]"""
+
+    ]"""
+
+    """[
+    ]"""
 
 ]
 
-// let examplePEVars = [
-//     """{
-//   }"""
+let jsonKeyValuePairExamples = [
+    "Test = 1"
 
-// ]
+    """SubSets = [
+    ]"""
 
-let examplePEnv = [
+    """SubSets=[
+    ]"""
+
+    """SubSets = [
+      {
+        SubsetName = "ABC"
+        Port = 200
+      }
+    ]"""
+
+    """SubSets = [
+      {
+        SubsetName = "ABC"
+        Port = 200
+      },
+      {
+        SubsetName = "DEF"
+      }
+    ]"""
+]
+
+let jsonObjects: FullTestSample<(string * Parsers.SettingValue) list> list =
+    ft [
+        """Test = 1""", Ok(Some [ "Test", Parsers.SettingValue.Int 1 ]), List.empty
+        """SubSets = []""", Ok(Some [ "SubSets", Parsers.SettingValue.Array List.empty ]), [ expectPosition 12 ]
+    ]
+
+let jsonEncodeExamples = [
+    """jsonencode({
+      SubSets= [
+      ]
+    })
+    """
+
+    """jsonencode({
+      SubSets = [
+      ]
+    })
+    """
+
+    """jsonencode({
+      SubSets = [
+        1
+      ]
+    })
+    """
+
+    """jsonencode({
+      SubSets= [
+        {
+          SubsetName = "Hello_ +-=/.,;:'Subset"
+        }
+      ]
+    })
+    """
+
+    """jsonencode({
+                Test = 1
+              })
+    """
+
+]
+
+let projectEnv = [
     """{
     id = local.envs.dev
     vars = {
@@ -223,11 +321,46 @@ let examplePEnv = [
   """
 
     """{
-    id = local.envs.dev
-    vars = {
-      "Project.Test" = "hello world"
-    }}
-  """
+      id = local.envs.dev
+      vars = {
+        "id1" = 1
+        "Project.Test" = "hello world"
+      }}
+    """
+
+    """{
+      id = local.envs.dev
+      vars = {
+        "id1" = 2
+        "Project.Test" = "hello world"
+        "Project.Tenant.Common.Subsets" = jsonencode({
+          "SubSets" = "1"
+        })
+      }}
+    """
+
+    """{
+      id = local.envs.dev
+      vars = {
+        "id1" = 2
+        "Project.Test" = "hello world"
+        "Project.Tenant.Common.Subsets" = jsonencode({
+          SubSets = 1
+        })
+      }}
+    """
+
+    """{
+      id = local.envs.dev
+      vars = {
+        "id1" = 2
+        "Project.Test" = "hello world"
+        "Project.Tenant.Common.Subsets"   = jsonencode({
+          SubSets = [
+          ]
+        })
+      }}
+    """
 ]
 
 let exampleProj = [
@@ -433,37 +566,6 @@ let exampleAttachedProjectList = [
     ]"""
 ]
 
-let jsonEncodeExamples = [
-    """jsonencode({
-    SubSets= [
-    ]
-  })
-  """
-
-    """jsonencode({
-    SubSets = [
-    ]
-  })
-  """
-
-    """jsonencode({
-    SubSets = [
-      1
-    ]
-  })
-  """
-
-    """jsonencode({
-    SubSets= [
-      {
-        SubsetName = "Hello_ +-=/.,;:'Subset"
-      }
-    ]
-  })
-  """
-
-]
-
 let exampleMs = [
     """   # Optional: Add security group definitions"""
     """
@@ -526,3 +628,66 @@ let exampleInput =
     }
   ]
 }"""
+
+let _examples = [
+    """module "my_module" {
+        source = "terraform-aws-modules/vpc/aws"
+        version = "2.0.0"
+    }"""
+
+    """module "my_module" {
+        source = "git::https://example.com/storage.git?ref=51d462976d84fdea54b47d80dcabbf680badcdb8"
+        version = "2.0.0"
+    }"""
+
+    """module "vpc" {
+  source = "terraform-aws-modules/vpc/aws"
+  version = "3.0.0"
+  name = "my-vpc"
+  cidr = "10.0.0.0/16"
+  enable_dns_support = true
+  enable_dns_hostnames = true
+  tags = {
+    Environment = "production"
+    Project     = "my-project"
+  }
+  # Optional: Specify custom VPC subnets
+  enable_nat_gateway = true
+  single_nat_gateway = true
+  # Optional: Add security group definitions
+  security_group_ids = [
+    "sg-12345678",
+    "sg-23456789"
+  ]
+  # Optional: Additional routing
+  private_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
+  public_subnets  = ["10.0.3.0/24", "10.0.4.0/24"]
+}
+module "s3_bucket" {
+  source = "terraform-aws-modules/s3-bucket/aws"
+  version = "2.1.0"
+  bucket = "my-unique-bucket-name"
+  acl    = "private"
+  tags = {
+    Environment = "production"
+    Project     = "my-project"
+  }
+}
+module "iam_role" {
+  source = "terraform-aws-modules/iam/aws//modules/iam-role"
+  version = "2.0.0"
+  role_name = "my-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })"""
+
+]
