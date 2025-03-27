@@ -193,7 +193,7 @@ let boolean: MyParser<bool> =
 let csvItemParser p =
     // let optComma = ws >>. opt (pchar ',') .>> ws |>> fun x -> ()
     // p .>> attempt (eof <|> optComma) <??> "csv-item"
-    let optComma = attempt ws >>. opt (pchar ',') .>> attempt ws |>> fun x -> ()
+    let optComma = attempt ws >>. optional (pchar ',') .>> attempt ws
 
     pushState "csv-item" >>. ws >>. p .>> popState "csv-item" <??> "csv-item"
     .>> attempt optComma
@@ -285,7 +285,7 @@ module JsonEncode =
 
     // Parser for a JSON object (a block of key-value pairs enclosed in curly braces)
     let jsonObject: Parser<_ list, _> =
-        between (pchar '{') (pchar '}') jsonEncodeBody <?> "JSON object"
+        between (pchar '{') (pchar '}') jsonEncodeBody <??> "JSON object"
 
     // array of values, array of objects, empty array, object
     nestedParserRef.Value <-
@@ -293,25 +293,25 @@ module JsonEncode =
         >>. choice [
             // support an array of simple values, or objects, not arrays
             attempt (
-                arrayParser settingValueParser <??> "NestedArray"
+                arrayParser (
+                    choice [
+                        settingValueParser <??> "NestedArray"
+                        jsonObject |>> fun x -> x |> SettingValue.Other
+                    ]
+                )
                 |>> fun x -> SettingValue.Array x
             )
-            attempt (
-                arrayParser jsonObject
-                |>> fun x -> x |> List.map SettingValue.Other |> SettingValue.Array
-            )
-            attempt emptyArray >>% SettingValue.Array List.empty
+            emptyArray >>% SettingValue.Array List.empty
             attempt settingValueParser <??> "setting value"
             jsonObject <??> "JsonObject" |>> SettingValue.Other
         ]
         .>> ws
-        <?> "Nested"
+        <??> "Nested"
 
     // Parser for the jsonencode function call
     let jsonencodeParser: Parser<_, _> =
         pstring "jsonencode" >>. ws >>. between (pchar '(') (pchar ')') jsonObject
-        <?> "jsonencode block"
-
+        <??> "jsonencode block"
 
 let knownSetting text rParser =
     lEqR (pstring text) rParser |>> fun (_, r) -> r
@@ -324,13 +324,18 @@ let unquotedSetting: MyParser<string * SettingValue> =
 let anySimpleSetting = ws >>. lEqR (identifier <|> stringLiteral) settingValueParser
 
 let tObjectBody =
-    ws >>. many (ws >>. anySimpleSetting .>> ws) .>> ws <??> "tObjectBody"
+    ws >>. many (attempt (ws >>. JsonEncode.keyValuePair)) .>> ws <??> "tObjectBody"
+
+// let mustSucceed (p:Parser<_,_>) (input: CharStream<'b>) =
+//     match p input with
+//     | Success (a,b,c) -> Success (a,b,c)
 
 let tObject: MyParser<(string * SettingValue) list> =
 
     // let tBody =
     // between (pchar '{' >>. ws) (pchar '}' >>. ws) (attempt (many unquotedSetting))
-    between (pchar '{' >>. ws) (ws >>. pchar '}') (ws >>. tObjectBody) <?> "tObject"
+    ws >>. between (pchar '{' >>. ws) (ws >>. pchar '}') (ws >>. tObjectBody)
+    <??> "tObject"
 
 // Define a parser for the "source" keyword and its value
 let sourceParser: MyParser<string> =

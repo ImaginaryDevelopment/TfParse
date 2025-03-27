@@ -42,6 +42,14 @@ module String =
             let i = text.IndexOf delimiter
             if i >= 0 then Some i else None
 
+let indentLines indent text =
+    if String.isValueString text then
+        text.Split([| "\r\n"; "\n"; "\r" |], System.StringSplitOptions.None)
+        |> Array.map (sprintf "%s%s" indent)
+        |> String.concat System.Environment.NewLine
+    else
+        text
+
 let trim text =
     if System.String.IsNullOrEmpty text then
         text

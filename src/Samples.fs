@@ -11,6 +11,19 @@ type FullTestSample<'t> = {
     Validators: ValidatorType list
 }
 
+type TestFailure = {
+    Message: string
+    Detail: string
+    Position: FParsec.Position
+    State: string list
+}
+
+type TestResult = {
+    Index: int
+    Result: Result<string, TestFailure>
+    Input: string
+}
+
 let ft items =
     items
     |> List.map (fun (i, exp, v) -> {
@@ -212,20 +225,35 @@ let tObjectBodySamples = [
     """octopus=octopus"""
     " "
 
-    // failing
     """ octopus ="octopus" """
+
     """ octopus = octopus """
+
+    """
+      "Project" = jsonencode({
+        SubSets = [
+        ]
+      })"""
 ]
 
 let tObjectSamples = [
     """{
     }"""
+
     """{}"""
+
     """{
-        octopus = octopus
-        octopus=octopus
-        "octopus" = "octopus"
-    }  """
+          octopus = octopus
+          octopus=octopus
+          "octopus" = "octopus"
+      }  """
+
+    """{
+      "Project" = jsonencode({
+        SubSets = [
+        ]
+      })
+    }"""
 ]
 
 
@@ -269,7 +297,6 @@ let jsonEncodeKvp = [
 
     "Test = 1"
 
-
     // 1
     """SubSets = [
     ]"""
@@ -288,8 +315,10 @@ let jsonEncodeKvp = [
     // 5
     """SubSets=[{Port=200}] 4"""
 
+    // 6
     """SubSets = [ { "Port" = 200 } ] 5"""
 
+    // 7
     """SubSets = [
       {
         SubsetName = "ABC"
@@ -297,6 +326,7 @@ let jsonEncodeKvp = [
       }
     ]"""
 
+    // 8
     """SubSets = [
       {
         SubsetName = "ABC"
@@ -312,6 +342,28 @@ let jsonObjects: FullTestSample<(string * Parsers.SettingValue) list> list =
     ft [
         """Test = 1""", Ok(Some [ "Test", Parsers.SettingValue.Int 1 ]), List.empty
         """SubSets = []""", Ok(Some [ "SubSets", Parsers.SettingValue.Array List.empty ]), [ expectPosition 12 ]
+        """SubSets = [
+        ]""",
+        Ok(Some [ "SubSets", Parsers.SettingValue.Array List.empty ]),
+        []
+        """SubSets = [
+          {
+            SubsetName = "Hello"
+            Port = 2000
+          }
+        ]""",
+        Ok(
+            Some [
+                "SubSets",
+                Parsers.SettingValue.Array [
+                    Parsers.SettingValue.Other [
+                        "SubsetName", Parsers.SettingValue.Str "Hello"
+                        "Port", Parsers.SettingValue.Int 2000
+                    ]
+                ]
+            ]
+        ),
+        []
     ]
 
 let jsonEncodeExamples = [
@@ -351,11 +403,23 @@ let jsonEncodeExamples = [
 ]
 
 let projectEnv = [
+    let makeJsonEncodes i =
+        jsonEncodeExamples
+        |> List.mapi (fun i2 text ->
+            $"""{{
+          id = local.envs.dev
+          vars = {{
+            "id1" = {i + i2}
+            "Project.Test" = "hello world"
+            "Project.Tenant.Common.Subsets" = {text}
+        }}""")
+
     """{
-    id = local.envs.dev
-    vars = {
-    }}
-  """
+      id = local.envs.dev
+      vars = {
+      }
+    }
+    """
 
     """{
       id = local.envs.dev
@@ -370,8 +434,43 @@ let projectEnv = [
       vars = {
         "id1" = 2
         "Project.Test" = "hello world"
+      }}
+    """
+
+    """{
+      id = local.envs.dev
+      vars = {
+        "id1" = 3
+        "Project.Test" = "hello world"
+        "Project.Tenant.Common.Subsets"=jsonencode({
+          SubSets = "1"
+        })
+      }}
+    """
+
+    $"""{{
+      id = local.envs.dev
+      vars = {{
+        "id1" = 4
+        "Project.Test" = "hello world"
+        "Project.Tenant.Common.Subsets" = {jsonEncodeExamples[0]}
+    }}"""
+
+    $"""{{
+      id = local.envs.dev
+      vars = {{
+        "id1" = 5
+        "Project.Test" = "hello world"
+        "Project.Tenant.Common.Subsets" = {jsonEncodeExamples[0]}
+    }}"""
+
+    """{
+      id = local.envs.dev
+      vars = {
+        "id1" = 6
+        "Project.Test" = "hello world"
         "Project.Tenant.Common.Subsets" = jsonencode({
-          "SubSets" = "1"
+          SubSets = "1"
         })
       }}
     """
@@ -379,7 +478,7 @@ let projectEnv = [
     """{
       id = local.envs.dev
       vars = {
-        "id1" = 2
+        "id1" = 7
         "Project.Test" = "hello world"
         "Project.Tenant.Common.Subsets" = jsonencode({
           SubSets = 1
@@ -390,7 +489,7 @@ let projectEnv = [
     """{
       id = local.envs.dev
       vars = {
-        "id1" = 2
+        "id1" = 8
         "Project.Test" = "hello world"
         "Project.Tenant.Common.Subsets"   = jsonencode({
           SubSets = [
@@ -398,6 +497,8 @@ let projectEnv = [
         })
       }}
     """
+
+    yield! makeJsonEncodes 9
 ]
 
 let exampleProj = [
